@@ -29,4 +29,5 @@ python3-setuptools=78.1.1-0.1
 rpm2cpio=4.20.1+dfsg-3
 samtools=1.21-1
 snp-sites=2.5.1-2+b2
+sourmash=4.8.14-3+b1
 wget=1.25.0-2

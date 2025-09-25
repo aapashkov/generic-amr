@@ -1,0 +1,6 @@
+archspec==0.2.5
+dask-expr==1.1.21
+pyahocorasick==2.2.0
+pyarrow==21.0.0
+pyrodigal==3.6.3.post1
+https://github.com/arpcard/rgi/archive/refs/tags/6.0.5.tar.gz

@@ -1,0 +1,8 @@
+services:
+  pipeline:
+    image: "aapashkov/generic-amr"
+    working_dir: "/ext"
+    user: "${UID}:${GID}"
+    volumes:
+      - ./:/ext
+    command: bash

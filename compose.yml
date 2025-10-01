@@ -1,0 +1,9 @@
+services:
+  pipeline:
+    image: "aapashkov/generic-amr"
+    working_dir: "/ext"
+    user: "${UID}:${GID}"
+    volumes:
+      - "./:/ext"
+    command: /bin/bash -euo pipefail -c \
+      "trap 'rm -rf data/tmp/*' EXIT && make -j ${JOBS:-$(nproc)}"

@@ -6,6 +6,7 @@ ARG OLIGOARRAYAUX_MD5SUM="6bd4817e1e75e1c6f66ef23ff31830b4"
 ARG CARD_URL="https://card.mcmaster.ca/download/0/broadstreet-v4.0.1.tar.bz2"
 ARG CARD_MD5SUM="3471be49d19cfee551e52a9a0d82e548"
 ENV PYTHONWARNINGS="ignore::SyntaxWarning"
+ENV MPLCONFIGDIR="/tmp/matplotlib"
 COPY /env/apt.txt /env/pip.txt /tmp/
 
 RUN apt-get update && \
@@ -25,7 +26,9 @@ RUN apt-get update && \
     printf '%s\t/tmp/card.tar.bz2\n' "${CARD_MD5SUM}" | md5sum -c - && \
     tar -C /tmp -jxf /tmp/card.tar.bz2 ./card.json && \
     rgi load -i /tmp/card.json && \
-    rgi main -n 1 -i /usr/share/doc/python-biopython-doc/Tests/MAF/cnksr3.fa -o /tmp/result --clean && \
+    rgi main -t protein -n 1 -i /usr/share/doc/proteinortho/examples/E.faa -o /tmp/result --clean && \
     # Clean up
     apt-get clean && \
     rm -rf /tmp/*
+
+WORKDIR /ext

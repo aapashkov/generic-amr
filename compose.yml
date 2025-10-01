@@ -4,5 +4,6 @@ services:
     working_dir: "/ext"
     user: "${UID}:${GID}"
     volumes:
-      - ./:/ext
-    command: bash
+      - "./:/ext"
+    command: /bin/bash -euo pipefail -c \
+      "trap 'rm -rf data/tmp/*' EXIT && make -j ${JOBS:-$(nproc)}"

@@ -27,6 +27,8 @@ RUN apt-get update && \
     tar -C /tmp -jxf /tmp/card.tar.bz2 ./card.json && \
     rgi load -i /tmp/card.json && \
     rgi main -t protein -n 1 -i /usr/share/doc/proteinortho/examples/E.faa -o /tmp/result --clean && \
+    # Platon works just fine with MUMmer 3.0.0
+    sed -i 's/4,0,0/3,0,0/' /usr/local/lib/python3.13/dist-packages/platon/utils.py && \
     # Clean up
     apt-get clean && \
     rm -rf /tmp/*

@@ -60,11 +60,12 @@ file structure like the following:
 │   │   └── 📄 gtdb.sbt.zip # Sourmash database with bacterial and archaeal genomes from GTDB RS226
 │   ├── 📁 genomes/         # Input decompressed genomes with .fna
 │   ├── 📁 logs/            # Pipeline execution logs
+│   ├── 📁 plasmids/        # Plasmid detection results
 │   ├── 📁 resistance/      # RGI predictions from CARD reference
 │   ├── 📁 signatures/      # Sourmash signature files and taxonomical predictions
 │   │   ├── 📄 *.sig        # Sourmash signature files
 │   │   └── 📄 *.tax        # Predicted species name from GTDB RS226 using Sourmash
-│   └── 📁 tmp/             # Taxonomic assignment
+│   └── 📁 tmp/             # Temporary directory location
 ├── 📁 env/                 # Environment definitions
 │   ├── 📄 apt.txt          # Debian's apt package manager dependencies
 │   └── 📄 pip.txt          # Python's pip requirements file

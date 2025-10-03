@@ -1,4 +1,5 @@
 archspec==0.2.5
+cb-platon==1.7
 dask-expr==1.1.21
 pyahocorasick==2.2.0
 pyarrow==21.0.0

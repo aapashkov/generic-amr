@@ -12,15 +12,26 @@ endif
 
 c = :
 gtdb = https$(c)//farm.cse.ucdavis.edu/~ctbrown/sourmash-db.new/gtdb-rs226/gtdb-reps-rs226-k31.dna.zip
+platon = https$(c)//zenodo.org/record/4066768/files/db.tar.gz
 
 accessions = $(shell basename -as .fna data/genomes/*.fna)
 signatures = $(accessions:%=data/signatures/%.sig)
 taxonomies = $(signatures:%.sig=%.tax)
 annotations = $(accessions:%=data/annotations/%)
 resistance = $(accessions:%=data/resistance/%)
+plasmids =$(accessions:%=data/plasmids/%)
 
-all: $(signatures) $(taxonomies) $(resistance) $(annotations)
+all: $(signatures) $(plasmids) $(taxonomies) $(resistance) $(annotations)
 > @date +'[%F %T] finished' 1>&2
+
+data/databases/platon:
+> @date +'[%F %T] downloading platon database' 1>&2 && \
+  mkdir -p data/{databases,tmp} && \
+  tmp=$$(mktemp -dp data/tmp) && \
+  trap 'rm -rf "$$tmp"' EXIT && \
+  wget -qO- "$(platon)" | tar -zxC "$$tmp" && \
+  mv "$$tmp/db" "$@" && \
+  date +'[%F %T] finished downloading platon database' 1>&2
 
 data/databases/gtdb.sbt.zip:
 > @date +'[%F %T] downloading gtdb' 1>&2 && \
@@ -67,3 +78,13 @@ data/annotations/%: data/signatures/%.tax
     &> "data/logs/annotation_$*.log" && \
   mv "$$tmp" "$@" && \
   date +'[%F %T] finished annotating $*' 1>&2
+
+data/plasmids/%: data/databases/platon
+> @date +'[%F %T] identifying plasmids in $*' 1>&2 && \
+  mkdir -p data/{plasmids,tmp} && \
+  tmp=$$(mktemp -dp data/tmp) && \
+  trap 'rm -rf "$$tmp"' EXIT && \
+  platon -t 1 -d data/databases/platon -p "$*" -o "$$tmp" \
+    "data/genomes/$*.fna" > "$$tmp/$*.tsv" && \
+  mv "$$tmp" "$@" && \
+  date +'[%F %T] finished identifying plasmids in $*' 1>&2

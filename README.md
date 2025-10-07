@@ -20,13 +20,30 @@ git clone https://github.com/aapashkov/generic-amr
 : # 📌 Change into base directory
 cd generic-amr
 
-: # 📄 Place your genomes with .fna extension in data/genomes directory
+: # 📄 Place your genome accessions in accessions.txt
 
-: # ⚡ Run pipeline
+: # ⚡ Run pipeline (you might need to run it as docker-compose on some systems)
 docker compose run --rm pipeline
 ```
 
 ### Configuration
+
+The `accessions.txt` file lists, one per line, the genome accessions to process
+and includes some example genome accessions to get started. These genome
+accessions may be any of the following:
+
+- **[NCBI Genome/RefSeq](ncbi.nlm.nih.gov/datasets/genome) identifiers**. They
+start with GCA_ or GCF_. For example,
+[GCA_000005845.2](https://www.ncbi.nlm.nih.gov/datasets/genome/GCA_000005845.2).
+- **[ENA](https://www.ebi.ac.uk/ena/browser/home) sequence assembly analysis
+identifiers**. They start with ERZ. For example,
+[ERZ3086155](https://www.ebi.ac.uk/ena/browser/view/ERZ3086155).
+- **[BV-BRC](https://www.bv-brc.org/searches/GenomeSearch) identifiers**. They
+consist of two integers separated by a dot. For example,
+[170673.13](https://www.bv-brc.org/view/Genome/170673.13).
+- **Private genomes**. When including these, place them in the `data/genomes`
+directory, decompressed and ending with `.fna`. Then, add their basenames (i.e.,
+without the `.fna` extension) to `accessions.txt`.
 
 Create a `.env` file in the root directory of this repository storing pipeline
 configuration details. Currently, the following environment variables are
@@ -36,9 +53,6 @@ supported:
 - `GID` (int) - your group ID, defaults to root if not specified.
 - `JOBS` (int) - number of CPUs to use for parallelization, defaults to all
 available CPUs.
-
-Genomes are read from `data/genomes`. They must be decompressed and their
-filenames must end with `.ext`.
 
 If you wish to connect to the Docker container to perform manual operations
 instead of running the pipeline, use the following command:
@@ -51,25 +65,27 @@ docker compose run --rm pipeline bash
 ### Output description
 
 All pipeline outputs are stored in the `data` directory. You should expect a
-file structure like the following:
+file structure like the following (where `{accession}` is a single entry in
+`accessions.txt`):
 
 ```shell
 ├── 📁 data/                # Pipeline outputs
-│   ├── 📁 annotations/     # Prokka annotations
+│   ├── 📁 annotations/     # Genome annotations
+│   │   └── 📁 {accession}/
+│   │       ├── 📄 {accession}.platon.*     # Platon plasmid predictions
+│   │       ├── 📄 {accession}.prokka.*     # Prokka annotations
+│   │       ├── 📄 {accession}.rgi.*        # RGI annotations
+│   │       └── 📄 {accession}.sourmash.*   # Sourmash signatures and taxonomies
 │   ├── 📁 databases/       # Reference databases
-│   │   └── 📄 gtdb.sbt.zip # Sourmash database with bacterial and archaeal genomes from GTDB RS226
-│   ├── 📁 genomes/         # Input decompressed genomes with .fna
-│   ├── 📁 logs/            # Pipeline execution logs
-│   ├── 📁 plasmids/        # Plasmid detection results
-│   ├── 📁 resistance/      # RGI predictions from CARD reference
-│   ├── 📁 signatures/      # Sourmash signature files and taxonomical predictions
-│   │   ├── 📄 *.sig        # Sourmash signature files
-│   │   └── 📄 *.tax        # Predicted species name from GTDB RS226 using Sourmash
-│   └── 📁 tmp/             # Temporary directory location
+│   │   ├── 📁 platon/      # Platon database
+│   │   └── 📄 gtdb.sbt.zip # Sourmash database with genomes from GTDB RS226
+│   ├── 📁 genomes/         # Decompressed genomes with .fna extension
+│   │   └── 📄 {accession}.fna
+│   └── 📁 logs/            # Pipeline execution logs, one per accession
 ├── 📁 env/                 # Environment definitions
 │   ├── 📄 apt.txt          # Debian's apt package manager dependencies
 │   └── 📄 pip.txt          # Python's pip requirements file
-├── 📄 compose.yml          # Docker execution parameters
+├── 📄 compose.yml          # Docker Compose execution parameters
 ├── 📄 Dockerfile           # Docker build definition
 ├── 📄 LICENCE              # MIT license
 ├── 📄 Makefile             # Pipeline steps

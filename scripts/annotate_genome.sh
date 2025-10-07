@@ -67,8 +67,8 @@ prokka --outdir . --prefix "${base}.prokka" --locustag GAMR --force --rfam \
 if [ -e "${input}.fai" ]; then
   index_exists=true
 fi
-rgi main --debug -i "$input" -o "${base}.rgi" -n 1 --clean 2>&1 | \
-  tee "${base}.rgi.log"
+rgi main --include_loose --debug -i "$input" -o "${base}.rgi" -n 1 --clean \
+  2>&1 | tee "${base}.rgi.log"
 if [ -z ${index_exists+x} ]; then
   rm -f "${input}.fai"
 fi

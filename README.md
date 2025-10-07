@@ -32,7 +32,7 @@ The `accessions.txt` file lists, one per line, the genome accessions to process
 and includes some example genome accessions to get started. These genome
 accessions may be any of the following:
 
-- **[NCBI Genome/RefSeq](ncbi.nlm.nih.gov/datasets/genome) identifiers**. They
+- **[NCBI Genome/RefSeq](https://ncbi.nlm.nih.gov/datasets/genome) identifiers**. They
 start with GCA_ or GCF_. For example,
 [GCA_000005845.2](https://www.ncbi.nlm.nih.gov/datasets/genome/GCA_000005845.2).
 - **[ENA](https://www.ebi.ac.uk/ena/browser/home) sequence assembly analysis

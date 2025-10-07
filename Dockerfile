@@ -1,8 +1,8 @@
-FROM debian:13
+FROM debian:trixie-20250929
 
 ARG DEBIAN_FRONTEND="noninteractive"
-ARG OLIGOARRAYAUX_URL="https://www.unafold.org/download/oligoarrayaux-3.8-1.x86_64.rpm"
-ARG OLIGOARRAYAUX_MD5SUM="6bd4817e1e75e1c6f66ef23ff31830b4"
+ARG OLIGOARRAYAUX_URL="https://anaconda.org/bioconda/oligoarrayaux/3.8.1/download/linux-64/oligoarrayaux-3.8.1-pl5321h9948957_0.tar.bz2"
+ARG OLIGOARRAYAUX_MD5SUM="97c83c978d07d0a01ec2f96cfc956688"
 ARG CARD_URL="https://card.mcmaster.ca/download/0/broadstreet-v4.0.1.tar.bz2"
 ARG CARD_MD5SUM="3471be49d19cfee551e52a9a0d82e548"
 ENV PYTHONWARNINGS="ignore::SyntaxWarning"
@@ -14,9 +14,9 @@ RUN apt-get update && \
     xargs -a /tmp/apt.txt apt-get install --no-install-recommends --yes && \
     pip install --no-cache-dir --break-system-packages --no-deps --requirement /tmp/pip.txt && \
     # Setup OligoArrayAux (an RGI dependency)
-    wget -O /tmp/oligoarrayaux.rpm --no-hsts "${OLIGOARRAYAUX_URL}" && \
-    printf '%s\t/tmp/oligoarrayaux.rpm\n' "${OLIGOARRAYAUX_MD5SUM}" | md5sum -c - && \
-    rpm2cpio /tmp/oligoarrayaux.rpm | cpio -idmv -D / && \
+    wget -O /tmp/oligoarrayaux.tar.bz2 --no-hsts "${OLIGOARRAYAUX_URL}" && \
+    printf '%s\t/tmp/oligoarrayaux.tar.bz2\n' "${OLIGOARRAYAUX_MD5SUM}" | md5sum -c - && \
+    tar -C /usr/local -jxf /tmp/oligoarrayaux.tar.bz2 && \
     # Setup Prokka database (symlink required for nonroot users)
     prokka --dbdir /usr/share/prokka/db --setupdb && \
     mkdir -p /.local/lib/prokka && \

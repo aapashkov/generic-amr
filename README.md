@@ -28,9 +28,9 @@ docker compose run --rm pipeline
 
 ### Configuration
 
-The `accessions.txt` lists, one per line, the genome accessions to process and
-includes some example genome accessions to get started. These genome accessions
-may be any of the following:
+The `accessions.txt` file lists, one per line, the genome accessions to process
+and includes some example genome accessions to get started. These genome
+accessions may be any of the following:
 
 - **[NCBI Genome/RefSeq](ncbi.nlm.nih.gov/datasets/genome) identifiers**. They
 start with GCA_ or GCF_. For example,
@@ -38,7 +38,7 @@ start with GCA_ or GCF_. For example,
 - **[ENA](https://www.ebi.ac.uk/ena/browser/home) sequence assembly analysis
 identifiers**. They start with ERZ. For example,
 [ERZ3086155](https://www.ebi.ac.uk/ena/browser/view/ERZ3086155).
-- **[BV-BRC](https://www.bv-brc.org/searches/GenomeSearch) identifiers** They
+- **[BV-BRC](https://www.bv-brc.org/searches/GenomeSearch) identifiers**. They
 consist of two integers separated by a dot. For example,
 [170673.13](https://www.bv-brc.org/view/Genome/170673.13).
 - **Private genomes**. When including these, place them in the `data/genomes`
@@ -65,15 +65,22 @@ docker compose run --rm pipeline bash
 ### Output description
 
 All pipeline outputs are stored in the `data` directory. You should expect a
-file structure like the following:
+file structure like the following (where `{accession}` is a single entry in
+`accessions.txt`):
 
 ```shell
 ├── 📁 data/                # Pipeline outputs
-│   ├── 📁 annotations/     # Prokka annotations
+│   ├── 📁 annotations/     # Genome annotations
+│   │   └── 📁 {accession}/
+│   │       ├── 📄 {accession}.platon.*     # Platon plasmid predictions
+│   │       ├── 📄 {accession}.prokka.*     # Prokka annotations
+│   │       ├── 📄 {accession}.rgi.*        # RGI annotations
+│   │       └── 📄 {accession}.sourmash.*   # Sourmash signatures and taxonomies
 │   ├── 📁 databases/       # Reference databases
 │   │   ├── 📁 platon/      # Platon database
 │   │   └── 📄 gtdb.sbt.zip # Sourmash database with genomes from GTDB RS226
 │   ├── 📁 genomes/         # Decompressed genomes with .fna extension
+│   │   └── 📄 {accession}.fna
 │   └── 📁 logs/            # Pipeline execution logs, one per accession
 ├── 📁 env/                 # Environment definitions
 │   ├── 📄 apt.txt          # Debian's apt package manager dependencies

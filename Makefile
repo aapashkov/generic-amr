@@ -14,20 +14,18 @@ c = :
 gtdb = https$(c)//farm.cse.ucdavis.edu/~ctbrown/sourmash-db.new/gtdb-rs226/gtdb-reps-rs226-k31.dna.zip
 platon = https$(c)//zenodo.org/record/4066768/files/db.tar.gz
 
-accessions = $(shell basename -as .fna data/genomes/*.fna)
-signatures = $(accessions:%=data/signatures/%.sig)
-taxonomies = $(signatures:%.sig=%.tax)
+accessions = $(shell cat accessions.txt)
+genomes = $(accessions:%=data/genomes/%.fna)
 annotations = $(accessions:%=data/annotations/%)
-resistance = $(accessions:%=data/resistance/%)
-plasmids =$(accessions:%=data/plasmids/%)
 
-all: $(signatures) $(plasmids) $(taxonomies) $(resistance) $(annotations)
+all: $(genomes) $(annotations)
 > @date +'[%F %T] finished' 1>&2
+.PHONY: all
 
 data/databases/platon:
 > @date +'[%F %T] downloading platon database' 1>&2 && \
-  mkdir -p data/{databases,tmp} && \
-  tmp=$$(mktemp -dp data/tmp) && \
+  mkdir -p data/databases && \
+  tmp=$$(mktemp -d data/databases/.tmp.XXXXXX) && \
   trap 'rm -rf "$$tmp"' EXIT && \
   wget -qO- "$(platon)" | tar -zxC "$$tmp" && \
   mv "$$tmp/db" "$@" && \
@@ -39,52 +37,15 @@ data/databases/gtdb.sbt.zip:
   wget -qO "$@" "$(gtdb)" && \
   date +'[%F %T] finished downloading gtdb' 1>&2
 
-data/signatures/%.sig: data/databases/gtdb.sbt.zip
-> @date +'[%F %T] sketching $*' 1>&2 && \
-  mkdir -p data/{signatures,logs} && \
-  sourmash sketch dna --name "$*" -o "$@" "data/genomes/$*.fna" \
-    &> "data/logs/sketch_$*.log" && \
-  date +'[%F %T] finished sketching $*' 1>&2
+data/genomes/%.fna: data/databases/platon data/databases/gtdb.sbt.zip
+> @date +'[%F %T] downloading $*' 1>&2 && \
+  mkdir -p data/{genomes,logs} && \
+  ./scripts/download_genomes.sh -o data/genomes '$*' &>> 'data/logs/$*.log' && \
+  date +'[%F %T] finished downloading $*' 1>&2
 
-data/signatures/%.tax: data/signatures/%.sig
-> @date +'[%F %T] classifying $*' 1>&2 && \
-  mkdir -p data/logs && \
-  sourmash search --best-only -o - "$<" data/databases/gtdb.sbt.zip \
-    2> "data/logs/tax_$*.log" | tail -1 | cut -f4 -d, | cut -f2,3 -d ' ' \
-    > "$@" && \
-  date +'[%F %T] finished classifying $*' 1>&2
-
-data/resistance/%: data/genomes/%.fna
-> @date +'[%F %T] detecting resistance of $*' 1>&2 && \
-  mkdir -p data/{tmp,resistance,logs} && \
-  tmp=$$(mktemp -dp data/tmp) && \
-  trap 'rm -rf "$$tmp"' EXIT && \
-  rgi main -i "$<" -o "$$tmp/$*" --include_loose --clean -n 1 \
-    &> "data/logs/res_$*.log" && \
-  ! grep -q Error "data/logs/res_$*.log" && \
-  [[ -f "$$tmp/$*.txt" ]] && [[ -f "$$tmp/$*.json" ]] && \
-  mv "$$tmp" "$@" && \
-  date +'[%F %T] finished detecting resistance of $*' 1>&2
-
-data/annotations/%: data/signatures/%.tax
+data/annotations/%: data/genomes/%.fna
 > @date +'[%F %T] annotating $*' 1>&2 && \
-  mkdir -p data/{tmp,annotations,logs} && \
-  tmp=$$(mktemp -dp data/tmp) && \
-  trap 'rm -rf "$$tmp"' EXIT && \
-  IFS=' ' read -r genus species < "$<" && \
-  prokka --outdir "$$tmp" --force --prefix "$*" --locustag GAMR \
-    --genus "$$genus" --species "$$species" --strain "$*" --cpus 1 \
-    --rfam "data/genomes/$*.fna" \
-    &> "data/logs/annotation_$*.log" && \
-  mv "$$tmp" "$@" && \
+  mkdir -p data/{annotations,logs} && \
+  ./scripts/annotate_genome.sh '$<' '$@' data/databases/gtdb.sbt.zip \
+    data/databases/platon &>> 'data/logs/$*.log' && \
   date +'[%F %T] finished annotating $*' 1>&2
-
-data/plasmids/%: data/databases/platon
-> @date +'[%F %T] identifying plasmids in $*' 1>&2 && \
-  mkdir -p data/{plasmids,tmp} && \
-  tmp=$$(mktemp -dp data/tmp) && \
-  trap 'rm -rf "$$tmp"' EXIT && \
-  platon -t 1 -d data/databases/platon -p "$*" -o "$$tmp" \
-    "data/genomes/$*.fna" > "$$tmp/$*.tsv" && \
-  mv "$$tmp" "$@" && \
-  date +'[%F %T] finished identifying plasmids in $*' 1>&2

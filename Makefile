@@ -38,7 +38,8 @@ data/databases/gtdb.sbt.zip:
   date +'[%F %T] finished downloading gtdb' 1>&2
 
 data/genomes/%.fna: data/databases/platon data/databases/gtdb.sbt.zip
-> @date +'[%F %T] downloading $*' 1>&2 && \
+> @sleep $${$$$(c) -1} && \
+  date +'[%F %T] downloading $*' 1>&2 && \
   mkdir -p data/{genomes,logs} && \
   ./scripts/download_genomes.sh -o data/genomes '$*' &>> 'data/logs/$*.log' && \
   date +'[%F %T] finished downloading $*' 1>&2

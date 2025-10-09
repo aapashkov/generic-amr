@@ -75,53 +75,76 @@ for accession in "$@"; do
   tmp=$(mktemp "${outdir}/.tmp.XXXXXX")
   trap 'rm -f '"$tmp" EXIT
 
-  # NCBI Genome/RefSeq identifiers
-  if [[ $accession =~ ^(GCA|GCF)_[0-9]+\.[0-9]+$ ]]; then
-    url=$($downloader $params "https://api.ncbi.nlm.nih.gov/datasets/v2/genome/accession/$accession/links" | \
-      jq -r '.assembly_links[] | select(.assembly_link_type == "FTP_LINK") | .resource_link' 2> /dev/null || printf '')
+  # Try to download genome five times before exiting on error
+  success=0
+  for ((try=0;try<5;try++)); do
 
-    if [ -z "$url" ]; then
-      printf '%s\n' "error: could not fetch assembly for '$accession'"
-      exit 1
-    fi
+    # NCBI Genome/RefSeq identifiers
+    if [[ $accession =~ ^(GCA|GCF)_[0-9]+\.[0-9]+$ ]]; then
+      url=$($downloader $params "https://api.ncbi.nlm.nih.gov/datasets/v2/genome/accession/$accession/links" | \
+        jq -r '.assembly_links[] | select(.assembly_link_type == "FTP_LINK") | .resource_link' 2> /dev/null || printf '')
 
-    url="${url/https:/ftp:}/${url##*/}_genomic.fna.gz"
-    $downloader $params "$url" | gunzip -c > "$tmp"
+      # Retry on error
+      if [ -z "$url" ]; then
+        printf '%s\n' "warning: retrying to download '$accession'"
+        sleep 1
+        continue
+      fi
 
-  # ENA sequence assembly analysis identifiers
-  elif [[ $accession =~ ^ERZ[0-9]+$ ]]; then
-    url=$($downloader $params "https://www.ebi.ac.uk/ena/portal/api/filereport?accession=${accession}&result=analysis&fields=analysis_type,submitted_ftp" | \
-      grep -m 1 SEQUENCE_ASSEMBLY || printf '')
+      url="${url/https:/ftp:}/${url##*/}_genomic.fna.gz"
+      $downloader $params "$url" | gunzip -c > "$tmp"
+      success=1
+      break
 
-    if [ -z "$url" ]; then
-      printf '%s\n' "error: could not fetch assembly for '$accession'"
-      exit 1
-    fi
+    # ENA sequence assembly analysis identifiers
+    elif [[ $accession =~ ^ERZ[0-9]+$ ]]; then
+      url=$($downloader $params "https://www.ebi.ac.uk/ena/portal/api/filereport?accession=${accession}&result=analysis&fields=analysis_type,submitted_ftp" | \
+        grep -m 1 SEQUENCE_ASSEMBLY || printf '')
 
-    url="ftp://ftp${url#*ftp}"
-    url="${url%%	*}"
-    $downloader $params "$url" | gunzip -c > "$tmp"
+      # Retry on error
+      if [ -z "$url" ]; then
+        printf '%s\n' "warning: retrying to download '$accession'"
+        sleep 1
+        continue
+      fi
 
-  # BV-BRC identifiers
-  elif [[ $accession =~ ^[0-9]+\.[0-9]+$ ]]; then
-    url="https://www.bv-brc.org/api/genome_sequence/?eq(genome_id,${accession})"
+      url="ftp://ftp${url#*ftp}"
+      url="${url%%	*}"
+      $downloader $params "$url" | gunzip -c > "$tmp"
+      success=1
+      break
 
-    if $downloader $params --header 'Accept: text/csv' "$url" | grep -qFm1 "$accession"; then
-      $downloader $params "$url" | \
-        jq -r '.[] | ">" + .sequence_id + "\n" + (.sequence | ascii_upcase)' \
-        > "$tmp"
+    # BV-BRC identifiers
+    elif [[ $accession =~ ^[0-9]+\.[0-9]+$ ]]; then
+      url="https://www.bv-brc.org/api/genome_sequence/?eq(genome_id,${accession})"
 
+      if $downloader $params --header 'Accept: text/csv' "$url" | grep -qFm1 "$accession"; then
+        $downloader $params "$url" | \
+          jq -r '.[] | ">" + .sequence_id + "\n" + (.sequence | ascii_upcase)' \
+          > "$tmp"
+        success=1
+        break
+
+      # Retry on error
+      else
+        printf '%s\n' "warning: retrying to download '$accession'"
+        sleep 1
+        continue
+      fi
+
+    # Invalid identifiers
     else
-      printf '%s\n' "error: could not fetch assembly for '$accession'"
+      printf '%s\n' "error: '$accession' is not a valid identifier"
       exit 1
     fi
+  done
 
-  # Invalid identifiers
-  else
-    printf '%s\n' "error: '$accession' is not a valid identifier"
+  if [[ $success == 0 ]]; then
+    printf '%s\n' "error: could not fetch assembly for '$accession'"
     exit 1
   fi
 
+  sleep 1
   mv "$tmp" "$output"
   printf '%s\n' "info: downloaded '$accession' into '$output'"
 

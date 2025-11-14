@@ -13,7 +13,6 @@ import collections as cls
 import csv
 import functools as ft
 import glob
-import json
 import multiprocessing as mp
 import os
 import re
@@ -211,7 +210,11 @@ def main() -> int:
     """Driver code."""
 
     prog = os.path.basename(__file__)
-    jobs = int(os.environ.get("JOBS", "4"))
+    jobs_env = os.environ.get("JOBS")
+    if jobs_env == "" or jobs_env is None:
+        jobs = os.cpu_count()
+    else:
+        jobs = int(jobs_env)
 
     # Print help message if incorrect number of parameters or missing deps
     if len(sys.argv) != 3 or not check_dependencies():

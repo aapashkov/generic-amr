@@ -18,7 +18,7 @@ accessions = $(shell cat accessions.txt)
 genomes = $(accessions:%=data/genomes/%.fna)
 annotations = $(accessions:%=data/annotations/%)
 
-all: $(genomes) $(annotations)
+all: $(genomes) $(annotations) data/pangenome
 > @date +'[%F %T] finished' 1>&2
 .PHONY: all
 
@@ -50,3 +50,9 @@ data/annotations/%: data/genomes/%.fna
   ./scripts/annotate_genome.sh '$<' '$@' data/databases/gtdb.sbt.zip \
     data/databases/platon &>> 'data/logs/$*.log' && \
   date +'[%F %T] finished annotating $*' 1>&2
+
+data/pangenome: $(annotations)
+> @date +'[%F %T] building pangenome' 1>&2 && \
+  mkdir -p data/logs && \
+  ./scripts/tabulate_annotations.py data/annotations data/pangenome &>> data/logs/pangenome.log && \
+  date +'[%F %T] finished building pangenome' 1>&2

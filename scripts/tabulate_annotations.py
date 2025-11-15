@@ -71,8 +71,9 @@ def get_species(genome: str, indir: str):
         reader = csv.DictReader(handle)
         best_match = next(reader)
 
-    # Remove GenBank identifier and the "uncultured" keyword from species name
+    # Remove GenBank identifier, "uncultured" and strain from species name
     species = best_match["name"].split(" ", 1)[1].removeprefix("uncultured ")
+    species = " ".join(species.split(" ", 2)[:2])
     ani_string = best_match["ani"]
     if ani_string == "":
         ani_string = "nan"
@@ -266,9 +267,9 @@ def main() -> int:
             data[genome].update(annotation)
 
     # Save outputs
-    df = pd.DataFrame(data).T.fillna(0)
+    df = pd.DataFrame(data).T.fillna(0).sort_index()
     df.index.name = "accession"
-    df.to_csv(os.path.join(tmp, "table.csv"))
+    df.to_csv(os.path.join(tmp, "table.csv"), na_rep="NA")
     with open(os.path.join(tmp, "prokka.txt"), "w", encoding="utf8") as handle:
         prokka = sorted(prokka_managed_dict, key=prokka_managed_dict.get) # type: ignore
         print(*prokka, sep="\n", file=handle)

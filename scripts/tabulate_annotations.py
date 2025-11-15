@@ -1,5 +1,6 @@
 #!/usr/bin/env python3
 # -*- coding: utf-8 -*-
+# pylint: disable=too-many-locals
 
 """Create a pangenome-like table from the annotations created using the
 annotate_genome.sh script in INDIR and save results into OUTDIR. If the JOBS
@@ -54,8 +55,9 @@ def mmseqs_gpu_available() -> bool:
     """Returns True if nvidia-smi exists and mmseqs has GPU support."""
 
     cmd = ["mmseqs", "easy-search", "--help"]
-    nvidia_smi = False if shutil.which("nvidia-smi") is None else True
-    return "--gpu" in sp.run(cmd, stdout=sp.PIPE).stdout.decode() and nvidia_smi
+    nvidia_smi = shutil.which("nvidia-smi") is not None
+    output = sp.run(cmd, stdout=sp.PIPE, check=False).stdout.decode()
+    return "--gpu" in output and nvidia_smi
 
 
 def get_species(genome: str, indir: str):
@@ -63,15 +65,18 @@ def get_species(genome: str, indir: str):
     associated ANI."""
 
     file = os.path.join(indir, genome, f"{genome}.sourmash.csv")
-    
+
     # Best match is listed as first entry in Sourmash CSV output
-    with open(file) as handle:
+    with open(file, encoding="utf8") as handle:
         reader = csv.DictReader(handle)
         best_match = next(reader)
 
     # Remove GenBank identifier and the "uncultured" keyword from species name
     species = best_match["name"].split(" ", 1)[1].removeprefix("uncultured ")
-    ani = float(best_match["ani"])
+    ani_string = best_match["ani"]
+    if ani_string == "":
+        ani_string = "nan"
+    ani = float(ani_string)
 
     return {"gtdb_species": species, "gtdb_ani": ani}
 
@@ -106,9 +111,12 @@ def get_resolved_annotations(genome: str, indir: str):
     # Create a set with plasmid contig names found in genome
     platon_file = os.path.join(indir, genome, f"{genome}.platon.tsv")
 
-    with open(platon_file) as handle:
-        reader = csv.DictReader(handle, delimiter="\t")
-        plasmids = {plasmid["ID"] for plasmid in reader}
+    if os.path.exists(platon_file):
+        with open(platon_file, encoding="utf8") as handle:
+            reader = csv.DictReader(handle, delimiter="\t")
+            plasmids = {plasmid["ID"] for plasmid in reader}
+    else:
+        plasmids = set()
 
     # Retrieve RGI non-loose predictions with coordinates
     rgi_file = os.path.join(indir, genome, f"{genome}.rgi.txt")
@@ -117,11 +125,12 @@ def get_resolved_annotations(genome: str, indir: str):
         "type": []
     }
 
-    with open(rgi_file) as handle:
+    with open(rgi_file, encoding="utf8") as handle:
         reader = csv.DictReader(handle, delimiter="\t")
 
         for row in reader:
-            if row["Cut_Off"] == "Loose": continue
+            if row["Cut_Off"] == "Loose":
+                continue
             plasmid = "P" if row["Contig"] in plasmids else "N"
             gene_type = "R" if row["Model_type"].startswith("rRNA") else "P"
             features = [f"{plasmid}_A{row['ARO']}_{gene_type}0"]
@@ -149,7 +158,7 @@ def get_resolved_annotations(genome: str, indir: str):
     # If overlap is greater than this, it refers to the same location
     overlap_threshold = 0.95
 
-    with open(prokka_file) as handle:
+    with open(prokka_file, encoding="utf8") as handle:
 
         # Ignore commented lines in file
         reader = csv.reader(
@@ -249,7 +258,7 @@ def main() -> int:
         func = ft.partial(get_species, indir=indir)
         species = pool.map(func, genomes)
         data.update(dict(zip(genomes, species)))
-        
+
         # Resolve annotations
         func = ft.partial(get_resolved_annotations, indir=indir)
         annotations = pool.map(func, genomes)
@@ -260,7 +269,7 @@ def main() -> int:
     df = pd.DataFrame(data).T.fillna(0)
     df.index.name = "accession"
     df.to_csv(os.path.join(tmp, "table.csv"))
-    with open(os.path.join(tmp, "prokka.txt"), "w") as handle:
+    with open(os.path.join(tmp, "prokka.txt"), "w", encoding="utf8") as handle:
         prokka = sorted(prokka_managed_dict, key=prokka_managed_dict.get) # type: ignore
         print(*prokka, sep="\n", file=handle)
     shutil.move(tmp, outdir)

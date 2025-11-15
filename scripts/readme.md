@@ -29,6 +29,20 @@ or BV-BRC identifiers (two integers separated by a dot). Requires 'wget' or
 example: download_genomes.sh -o genomes/ GCA_000005845.2 ERZ3086155 170673.13
 ```
 
+### get_biosample.sh
+
+```text
+usage: get_biosample.sh ACCESSION...
+
+Retrieve the BioSamples of genome ACCESSIONs and print them to stdout in TSV.
+Valid ACCESSION strings include NCBI Genome/RefSeq identifiers (starting with
+GCA_ or GCF_), ENA sequence assembly analysis identifiers (starting with ERZ),
+or BV-BRC identifiers (two integers separated by a dot). Requires 'wget' or
+'curl', and 'jq' to be available in PATH.
+
+example: get_biosample.sh GCA_000005845.2 ERZ3086155 170673.13
+```
+
 ### tabulate_annotations.py
 
 ```text

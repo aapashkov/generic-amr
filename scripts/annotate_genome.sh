@@ -48,7 +48,7 @@ cd "$tmp"
 
 # Classify genome by sketching it with Sourmash
 sourmash sketch dna -o "${base}.sourmash.sig" --name "$base" "$input"
-sourmash search -o "${base}.sourmash.csv" --best-only \
+sourmash search -o "${base}.sourmash.csv" --best-only --threshold 0.0 \
   "${base}.sourmash.sig" "$sbt"
 species=$(sed -n '2p' "${base}.sourmash.csv" | cut -f4 -d,)
 

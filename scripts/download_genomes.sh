@@ -9,10 +9,10 @@ help="usage: ${0##*/} [-o OUTDIR] ACCESSION...
 Download genome ACCESSIONs into OUTDIR, which defaults to working directory.
 Valid ACCESSION strings include NCBI Genome/RefSeq identifiers (starting with
 GCA_ or GCF_), ENA sequence assembly analysis identifiers (starting with ERZ),
-or BV-BRC identifiers (two integers separated by a dot). Requires 'wget' or
-'curl', and 'jq' to be available in PATH.
+or BV-BRC identifiers (starting with BVBRC_). Requires 'wget' or 'curl', and
+'jq' to be available in PATH.
 
-example: ${0##*/} -o genomes/ GCA_000005845.2 ERZ3086155 170673.13"
+example: ${0##*/} -o genomes/ GCA_000005845.2 ERZ3086155 BVBRC_170673.13"
 
 # Parse output directory, removing trailing '/'
 outdir='.'
@@ -135,12 +135,13 @@ for accession in "$@"; do
       fi
 
     # BV-BRC identifiers
-    elif [[ $accession =~ ^[0-9]+\.[0-9]+$ ]]; then
-      url="https://www.bv-brc.org/api/genome_sequence/?eq(genome_id,${accession})"
+    elif [[ $accession =~ ^BVBRC_[0-9]+\.[0-9]+$ ]]; then
+      acc=${accession#*_}
+      url="https://www.bv-brc.org/api/genome_sequence/?eq(genome_id,${acc})"
 
-      if $downloader $params --header 'Accept: text/csv' "$url" | grep -qFm1 "$accession"; then
+      if $downloader $params --header 'Accept: text/csv' "$url" | grep -qFm1 "$acc"; then
         $downloader $params "$url" | \
-          jq -r '.[] | ">" + .sequence_id + "\n" + (.sequence | ascii_upcase)' \
+          jq -r '.[] | ">BVBRC_" + .sequence_id + "\n" + (.sequence | ascii_upcase)' \
           > "$tmp"
         success=1
         break

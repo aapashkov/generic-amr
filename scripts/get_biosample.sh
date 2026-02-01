@@ -9,10 +9,10 @@ help="usage: ${0##*/} ACCESSION...
 Retrieve the BioSamples of genome ACCESSIONs and print them to stdout in TSV.
 Valid ACCESSION strings include NCBI Genome/RefSeq identifiers (starting with
 GCA_ or GCF_), ENA sequence assembly analysis identifiers (starting with ERZ),
-or BV-BRC identifiers (two integers separated by a dot). Requires 'wget' or
+or BV-BRC identifiers (starting with BVBRC_). Requires 'wget' or
 'curl', and 'jq' to be available in PATH.
 
-example: ${0##*/} GCA_000005845.2 ERZ3086155 170673.13"
+example: ${0##*/} GCA_000005845.2 ERZ3086155 BVBRC_170673.13"
 
 # Print help message if insufficient number of positional arguments
 if [ "$#" -lt 1 ]; then
@@ -56,8 +56,9 @@ for accession in "$@"; do
       selector='.[0].sample_accession'
 
     # BV-BRC identifiers
-    elif [[ $accession =~ ^[0-9]+\.[0-9]+$ ]]; then
-      url="https://www.bv-brc.org/api/genome/${accession}"
+    elif [[ $accession =~ ^BVBRC_[0-9]+\.[0-9]+$ ]]; then
+      acc=${accession#*_}
+      url="https://www.bv-brc.org/api/genome/${acc}"
       selector='.biosample_accession'
 
     # Invalid identifiers

@@ -23,10 +23,21 @@ usage: download_genomes.sh [-o OUTDIR] ACCESSION...
 Download genome ACCESSIONs into OUTDIR, which defaults to working directory.
 Valid ACCESSION strings include NCBI Genome/RefSeq identifiers (starting with
 GCA_ or GCF_), ENA sequence assembly analysis identifiers (starting with ERZ),
-or BV-BRC identifiers (two integers separated by a dot). Requires 'wget' or
-'curl', and 'jq' to be available in PATH.
+or BV-BRC identifiers (starting with BVBRC_). Requires 'wget' or 'curl', and
+'jq' to be available in PATH.
 
-example: download_genomes.sh -o genomes/ GCA_000005845.2 ERZ3086155 170673.13
+example: download_genomes.sh -o genomes/ GCA_000005845.2 ERZ3086155 BVBRC_170673.13
+```
+
+### download_reads.sh
+
+```text
+usage: download_reads.sh [-o OUTDIR] ACCESSION...
+
+Download SRA ACCESSIONs into OUTDIR, which defaults to working directory.
+Requires 'fasterq-dump' and 'gzip' to be available in PATH.
+
+example: download_reads.sh -o reads/ SRR33085175 ERR12520663
 ```
 
 ### get_biosample.sh
@@ -41,17 +52,6 @@ or BV-BRC identifiers (two integers separated by a dot). Requires 'wget' or
 'curl', and 'jq' to be available in PATH.
 
 example: get_biosample.sh GCA_000005845.2 ERZ3086155 170673.13
-```
-
-### download_reads.sh
-
-```text
-usage: download_reads.sh [-o OUTDIR] ACCESSION...
-
-Download SRA ACCESSIONs into OUTDIR, which defaults to working directory.
-Requires 'fasterq-dump' and 'gzip' to be available in PATH.
-
-example: download_reads.sh -o reads/ SRR33085175 ERR12520663
 ```
 
 ### tabulate_annotations.py

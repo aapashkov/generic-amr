@@ -43,6 +43,17 @@ or BV-BRC identifiers (two integers separated by a dot). Requires 'wget' or
 example: get_biosample.sh GCA_000005845.2 ERZ3086155 170673.13
 ```
 
+### download_reads.sh
+
+```text
+usage: download_reads.sh [-o OUTDIR] ACCESSION...
+
+Download SRA ACCESSIONs into OUTDIR, which defaults to working directory.
+Requires 'fasterq-dump' and 'gzip' to be available in PATH.
+
+example: download_reads.sh -o reads/ SRR33085175 ERR12520663
+```
+
 ### tabulate_annotations.py
 
 ```text

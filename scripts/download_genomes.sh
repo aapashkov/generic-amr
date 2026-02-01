@@ -9,10 +9,10 @@ help="usage: ${0##*/} [-o OUTDIR] ACCESSION...
 Download genome ACCESSIONs into OUTDIR, which defaults to working directory.
 Valid ACCESSION strings include NCBI Genome/RefSeq identifiers (starting with
 GCA_ or GCF_), ENA sequence assembly analysis identifiers (starting with ERZ),
-or BV-BRC identifiers (two integers separated by a dot). Requires 'wget' or
-'curl', and 'jq' to be available in PATH.
+or BV-BRC identifiers (starting with BVBRC_). Requires 'wget' or 'curl', and
+'jq' to be available in PATH.
 
-example: ${0##*/} -o genomes/ GCA_000005845.2 ERZ3086155 170673.13"
+example: ${0##*/} -o genomes/ GCA_000005845.2 ERZ3086155 BVBRC_170673.13"
 
 # Parse output directory, removing trailing '/'
 outdir='.'
@@ -81,6 +81,8 @@ for accession in "$@"; do
 
     # NCBI Genome/RefSeq identifiers
     if [[ $accession =~ ^(GCA|GCF)_[0-9]+\.[0-9]+$ ]]; then
+
+      # Request FTP URL of genome
       url=$($downloader $params "https://api.ncbi.nlm.nih.gov/datasets/v2/genome/accession/$accession/links" | \
         jq -r '.assembly_links[] | select(.assembly_link_type == "FTP_LINK") | .resource_link' 2> /dev/null || printf '')
 
@@ -91,13 +93,23 @@ for accession in "$@"; do
         continue
       fi
 
+      # Extract URL from response and download genome
       url="${url/https:/ftp:}/${url##*/}_genomic.fna.gz"
-      $downloader $params "$url" | gunzip -c > "$tmp"
-      success=1
-      break
+      if $downloader $params "$url" | gunzip -c > "$tmp"; then
+        success=1
+        break
+
+      # Retry on error
+      else
+        printf '%s\n' "warning: retrying to download '$accession'"
+        sleep 1
+        continue
+      fi
 
     # ENA sequence assembly analysis identifiers
     elif [[ $accession =~ ^ERZ[0-9]+$ ]]; then
+
+      # Request FTP URL of genome
       url=$($downloader $params "https://www.ebi.ac.uk/ena/portal/api/filereport?accession=${accession}&result=analysis&fields=analysis_type,submitted_ftp" | \
         grep -m 1 SEQUENCE_ASSEMBLY || printf '')
 
@@ -108,19 +120,28 @@ for accession in "$@"; do
         continue
       fi
 
+      # Extract URL from response and download genome
       url="ftp://ftp${url#*ftp}"
       url="${url%%	*}"
-      $downloader $params "$url" | gunzip -c > "$tmp"
-      success=1
-      break
+      if $downloader $params "$url" | gunzip -c > "$tmp"; then
+        success=1
+        break
+
+      # Retry on error
+      else
+        printf '%s\n' "warning: retrying to download '$accession'"
+        sleep 1
+        continue
+      fi
 
     # BV-BRC identifiers
-    elif [[ $accession =~ ^[0-9]+\.[0-9]+$ ]]; then
-      url="https://www.bv-brc.org/api/genome_sequence/?eq(genome_id,${accession})"
+    elif [[ $accession =~ ^BVBRC_[0-9]+\.[0-9]+$ ]]; then
+      acc=${accession#*_}
+      url="https://www.bv-brc.org/api/genome_sequence/?eq(genome_id,${acc})"
 
-      if $downloader $params --header 'Accept: text/csv' "$url" | grep -qFm1 "$accession"; then
+      if $downloader $params --header 'Accept: text/csv' "$url" | grep -qFm1 "$acc"; then
         $downloader $params "$url" | \
-          jq -r '.[] | ">" + .sequence_id + "\n" + (.sequence | ascii_upcase)' \
+          jq -r '.[] | ">BVBRC_" + .sequence_id + "\n" + (.sequence | ascii_upcase)' \
           > "$tmp"
         success=1
         break

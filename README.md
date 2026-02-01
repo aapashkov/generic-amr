@@ -39,8 +39,8 @@ start with GCA_ or GCF_. For example,
 identifiers**. They start with ERZ. For example,
 [ERZ3086155](https://www.ebi.ac.uk/ena/browser/view/ERZ3086155).
 - **[BV-BRC](https://www.bv-brc.org/searches/GenomeSearch) identifiers**. They
-consist of two integers separated by a dot. For example,
-[170673.13](https://www.bv-brc.org/view/Genome/170673.13).
+start with BVBRC_. For example,
+[BVBRC_170673.13](https://www.bv-brc.org/view/Genome/170673.13).
 - **Private genomes**. When including these, place them in the `data/genomes`
 directory, decompressed and ending with `.fna`. Then, add their basenames (i.e.,
 without the `.fna` extension) to `accessions.txt`.

@@ -28,3 +28,27 @@ or BV-BRC identifiers (two integers separated by a dot). Requires 'wget' or
 
 example: download_genomes.sh -o genomes/ GCA_000005845.2 ERZ3086155 170673.13
 ```
+
+### download_reads.sh
+
+```text
+usage: download_reads.sh [-o OUTDIR] ACCESSION...
+
+Download SRA ACCESSIONs into OUTDIR, which defaults to working directory.
+Requires 'fasterq-dump' and 'gzip' to be available in PATH.
+
+example: download_reads.sh -o reads/ SRR33085175 ERR12520663
+```
+
+### tabulate_annotations.py
+
+```text
+usage: tabulate_annotations.py INDIR OUTDIR
+
+Create a pangenome-like table from the annotations created using the
+annotate_genome.sh script in INDIR and save results into OUTDIR. If the JOBS
+environment variable is set, will use JOBS processes, and four otherwise.
+Requires mmseqs, proteinortho, mafft and snp-sites to be available in PATH.
+
+example: JOBS=10 tabulate_annotations.py annotations/ pangenome/
+```

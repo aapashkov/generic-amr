@@ -66,3 +66,29 @@ Requires mmseqs, proteinortho, mafft and snp-sites to be available in PATH.
 
 example: JOBS=10 tabulate_annotations.py annotations/ pangenome/
 ```
+
+### trim_reads.sh
+
+```text
+usage: trim_reads.sh INDIR OUTDIR KRAKENDB [PLATFORM]
+
+Trim reads from INDIR and save results to OUTDIR. Files in INDIR must comprise
+one to three fastq.gz files and should start with the BASEname of INDIR, with
+the following structure:
+
+  BASE/BASE.fastq.gz   → single/unpaired reads
+  BASE/BASE_1.fastq.gz → forward reads
+  BASE/BASE_2.fastq.gz → reverse reads
+
+Read identifiers must match '@BASE.X[.Y]', where X is the read ID, and Y must be
+1, 2, or 3, respectively corresponding to forward, reverse and unpaired reads.
+Single reads (without paired-end data) must not contain '.Y'. A KRAKENDB with at
+least human sequences is required to remove human-mapping reads. When BASE is an
+accession from SRA, PLATFORM is not necessary as it is fetched directly from
+SRA. Otherwise, or if you want to overwrite it, PLATFORM must be provided and be
+one of: ILLUMINA, ION_TORRENT, LS454, OXFORD_NANOPORE, PACBIO_SMRT. Requires
+'efetch' and 'xtract' (from NCBI Entrez Direct), 'trim_galore', 'pear',
+'porechop', 'seqkit', 'fastp', 'kraken2' to be available in PATH.
+
+example: trim_reads.sh raw/SRR33085175/ trimmed/ OXFORD_NANOPORE
+```

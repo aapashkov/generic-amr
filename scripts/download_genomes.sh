@@ -9,8 +9,8 @@ help="usage: ${0##*/} [-o OUTDIR] ACCESSION...
 Download genome ACCESSIONs into OUTDIR, which defaults to working directory.
 Valid ACCESSION strings include NCBI Genome/RefSeq identifiers (starting with
 GCA_ or GCF_), ENA sequence assembly analysis identifiers (starting with ERZ),
-or BV-BRC identifiers (starting with BVBRC_). Requires 'wget' or 'curl', and
-'jq' to be available in PATH.
+or BV-BRC identifiers (starting with BVBRC_). Requires 'wget' or 'curl', 'jq',
+'datasets' and 'unzip' to be available in PATH.
 
 example: ${0##*/} -o genomes/ GCA_000005845.2 ERZ3086155 BVBRC_170673.13"
 
@@ -56,11 +56,13 @@ else
   exit 1
 fi
 
-# Check for jq
-if ! command -v jq > /dev/null; then
-  printf '%s\n' 'error: jq: command not found'
-  exit 1
-fi
+# Check for dependencies
+for cmd in jq datasets unzip; do
+  if ! command -v $cmd > /dev/null; then
+    printf '%s\n' "error: $cmd: command not found"
+    exit 1
+  fi
+done
 
 for accession in "$@"; do
 
@@ -82,27 +84,21 @@ for accession in "$@"; do
     # NCBI Genome/RefSeq identifiers
     if [[ $accession =~ ^(GCA|GCF)_[0-9]+\.[0-9]+$ ]]; then
 
-      # Request FTP URL of genome
-      url=$($downloader $params "https://api.ncbi.nlm.nih.gov/datasets/v2/genome/accession/$accession/links" | \
-        jq -r '.assembly_links[] | select(.assembly_link_type == "FTP_LINK") | .resource_link' 2> /dev/null || printf '')
+      # Download zip file to temporary location and extract the genome file
+      ziptmp=$(mktemp "${outdir}/.tmp.XXXXXX")
+      trap 'rm -f '"$ziptmp" EXIT
 
-      # Retry on error
-      if [ -z "$url" ]; then
-        printf '%s\n' "warning: retrying to download '$accession'"
-        sleep 1
-        continue
-      fi
-
-      # Extract URL from response and download genome
-      url="${url/https:/ftp:}/${url##*/}_genomic.fna.gz"
-      if $downloader $params "$url" | gunzip -c > "$tmp"; then
+      if datasets download genome accession --filename "$ziptmp" "$accession" 2> /dev/null && \
+        unzip -p "$ziptmp" "ncbi_dataset/data/$accession/${accession}*.fna" > "$tmp"; then
         success=1
+        rm -f "$ziptmp"
         break
 
       # Retry on error
       else
         printf '%s\n' "warning: retrying to download '$accession'"
         sleep 1
+        rm -f "$ziptmp"
         continue
       fi
 

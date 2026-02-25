@@ -77,9 +77,9 @@ for accession in "$@"; do
   tmp=$(mktemp "${outdir}/.tmp.XXXXXX")
   trap 'rm -f '"$tmp" EXIT
 
-  # Try to download genome five times before exiting on error
+  # Try to download genome ten times before exiting on error
   success=0
-  for ((try=0;try<5;try++)); do
+  for ((try=0;try<10;try++)); do
 
     # NCBI Genome/RefSeq identifiers
     if [[ $accession =~ ^(GCA|GCF)_[0-9]+\.[0-9]+$ ]]; then

@@ -69,11 +69,17 @@ else
   exit 1
 fi
 
-# Try to fetch platform from SRA
+# Try to fetch platform from SRA, with ENA fallback
 platform=$(
   efetch -db sra -id "$base" -format xml 2> /dev/null |
   xtract -pattern PLATFORM -element '$'
 )
+if [ -z "$platform" ]; then
+  platform=$(
+    wget -qO- "https://www.ebi.ac.uk/ena/portal/api/filereport?accession=${base}&result=read_run&fields=instrument_platform" | \
+    grep "$base" | cut -f2 || :
+  )
+fi
 
 # If user has set a platform, overwrite it
 if [[ "$user_platform" != "UNDEFINED" ]]; then

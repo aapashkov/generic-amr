@@ -61,14 +61,27 @@ for accession in "$@"; do
   trap 'rm -rf '"$tmp" EXIT
 
   # Download reads
-  prefetch --progress --output-directory "$tmp" "$accession"
-  # shellcheck disable=SC2016
-  fasterq-dump --seq-defline '@$ac.$si' \
-    --qual-defline '+' \
-    --details \
-    --outdir "$tmp/$accession" \
-    --temp "$tmp" \
-    "$tmp/$accession/${accession}.sra"
+  success=0
+  for ((try=0;try<10;try++)); do
+    # shellcheck disable=SC2016
+    if prefetch --progress --output-directory "$tmp" "$accession" && \
+      fasterq-dump --seq-defline '@$ac.$si' \
+        --qual-defline '+' \
+        --details \
+        --outdir "$tmp/$accession" \
+        --temp "$tmp" \
+        "$tmp/$accession/${accession}.sra"; then
+      success=1
+      break
+    fi
+    printf '%s\n' "warning: retrying to fetch reads for '$accession'"
+    sleep 1
+  done
+
+  if [[ $success == 0 ]]; then
+    printf '%s\n' "error: could not fetch reads for '$accession'"
+    exit 1
+  fi
 
   # Append '.1' and '.2' to read IDs if files include paired-end data.
   # For example: @ERR12520663.5 → @ERR12520663.5.1 or @ERR12520663.5.2

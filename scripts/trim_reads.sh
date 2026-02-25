@@ -23,7 +23,7 @@ one of: ILLUMINA, ION_TORRENT, LS454, OXFORD_NANOPORE, PACBIO_SMRT. Requires
 'efetch' and 'xtract' (from NCBI Entrez Direct), 'trim_galore', 'pear',
 'porechop', 'seqkit', 'fastp', 'kraken2' to be available in PATH.
 
-example: ${0##*/} raw/SRR33085175/ trimmed/ OXFORD_NANOPORE"
+example: ${0##*/} raw/SRR33085175/ trimmed/ krakendb/ OXFORD_NANOPORE"
 
 # Print help message if insufficient number of positional arguments
 if [ "$#" -lt 3 ] || [ "$#" -gt 4 ]; then

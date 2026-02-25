@@ -22,6 +22,11 @@ accessions = $(shell cut -f1 accessions.txt | awk '!seen[$$0]++')
 genomes = $(accessions:%=data/genomes/%.fna)
 annotations = $(accessions:%=data/annotations/%)
 
+# Explicitly ask make to keep read files (because they are intermediate)
+raw_reads = $(accessions:%=data/reads/raw/%)
+trimmed_reads = $(accessions:%=data/reads/trimmed/%)
+.SECONDARY: $(raw_reads) $(trimmed_reads)
+
 # Genomes with specific prefixes will always be downloaded and not assembled
 prefixes = GCA_ GCF_ ERZ BVBRC_
 

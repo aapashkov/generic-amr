@@ -1,6 +1,6 @@
 services:
   pipeline:
-    image: "aapashkov/generic-amr:0.4.0"
+    image: "aapashkov/generic-amr:0.5.0"
     working_dir: "/ext"
     user: "${UID}:${GID}"
     environment:

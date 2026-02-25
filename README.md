@@ -28,9 +28,9 @@ docker compose run --rm pipeline
 
 ### Configuration
 
-The `accessions.txt` file lists, one per line, the genome accessions to process
-and includes some example genome accessions to get started. These genome
-accessions may be any of the following:
+The `accessions.txt` file lists, one per line, the genome and/or read accessions
+to process and includes some example accessions to get started. These accessions
+may be any of the following:
 
 - **[NCBI Genome/RefSeq](https://ncbi.nlm.nih.gov/datasets/genome) identifiers**. They
 start with GCA_ or GCF_. For example,
@@ -41,9 +41,34 @@ identifiers**. They start with ERZ. For example,
 - **[BV-BRC](https://www.bv-brc.org/searches/GenomeSearch) identifiers**. They
 start with BVBRC_. For example,
 [BVBRC_170673.13](https://www.bv-brc.org/view/Genome/170673.13).
+- **[NCBI SRA](https://ncbi.nlm.nih.gov/sra) identifiers**. They start with DRR,
+ERR or SRR. For example, [SRR33085175](https://www.ncbi.nlm.nih.gov/sra/SRR33085175).
+The sequencing technology is inferred by a request to NCBI SRA API, but can be
+overwritten by appending to the accession a tab (`\t`) and the technology, which
+can be one of: `ILLUMINA`, `ION_TORRENT`, `LS454`, `OXFORD_NANOPORE`,
+`PACBIO_SMRT`.
 - **Private genomes**. When including these, place them in the `data/genomes`
 directory, decompressed and ending with `.fna`. Then, add their basenames (i.e.,
 without the `.fna` extension) to `accessions.txt`.
+- **Private reads**. When including these, place them in the `data/reads/raw`
+directory, one folder per sample, with the following structure:
+  ```text
+  BASE/BASE.fastq.gz   → single/unpaired reads
+  BASE/BASE_1.fastq.gz → forward reads
+  BASE/BASE_2.fastq.gz → reverse reads
+  ```
+  Read identifiers must match `@BASE.X[.Y]`, where `X` is the read ID, and `Y`
+  must be `1`, `2`, or `3`, respectively corresponding to forward, reverse and
+  unpaired reads. Single reads (without paired-end data) must not contain `.Y`.
+  After doing this, add the read BASEnames (i.e., folder names) to
+  `accessions.txt`, followed by a tab (`\t`) and their sequencing technology,
+  which can be one of: `ILLUMINA`, `ION_TORRENT`, `LS454`, `OXFORD_NANOPORE`,
+  `PACBIO_SMRT`.
+
+> [!WARNING]
+> When using **private reads**, their names MUST NOT start with GCA_, GCF_, ERZ,
+> or BVBRC_, as those will always be treated as genomes that have to be
+> downloaded (ignoring the reads even if they exist).
 
 Create a `.env` file in the root directory of this repository storing pipeline
 configuration details. Currently, the following environment variables are

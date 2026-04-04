@@ -29,6 +29,34 @@ RGI_MUT_RE = re.compile(r"^([A-Za-z\-*])(\d+)([A-Za-z\-*])$")
 
 @dataclass(frozen=True)
 class RawAnnotation:
+    """Container for a single annotation (RGI or Prokka) from one accession.
+
+    Parameters
+    ----------
+    accession : str
+        Genome accession this annotation belongs to.
+    source : str
+        Source of the annotation, either "RGI" or "PROKKA".
+    contig : str
+        Contig identifier where the feature is located.
+    start, end : int
+        1-based inclusive coordinates of the feature on the contig.
+    strand : str
+        Strand orientation: '+' or '-'.
+    is_rna : bool
+        True when the feature is an RNA (tRNA/rRNA/etc.).
+    is_plasmid : bool
+        True when the contig was predicted as plasmid by Platon.
+    function_id : str
+        Function identifier (RGI uses A#######, Prokka uses P#######).
+    locus_tag : str or None
+        Locus tag (from Prokka) when available.
+    sequence : str or None
+        Sequence associated with the feature (AA for proteins, NT for RNA).
+    mutations : tuple[str, ...]
+        Normalized mutation strings associated with the feature.
+    """
+
     accession: str
     source: str  # "RGI" | "PROKKA"
     contig: str
@@ -44,6 +72,15 @@ class RawAnnotation:
 
 
 def parse_args() -> argparse.Namespace:
+    """Parse command-line arguments.
+
+    Returns
+    -------
+    argparse.Namespace
+        Namespace with attributes:
+        - INDIR : input directory containing per-accession annotation folders
+        - OUTPREFIX : output prefix for CSV, JSON and cache directory
+    """
     parser = argparse.ArgumentParser(
         description="Tabulate genome annotations into feature counts."
     )
@@ -53,6 +90,17 @@ def parse_args() -> argparse.Namespace:
 
 
 def get_jobs() -> int:
+    """Determine number of parallel jobs from environment.
+
+    Reads the JOBS environment variable and returns it as a positive integer.
+    If JOBS is unset or cannot be parsed as a positive integer, returns the
+    default value 4.
+
+    Returns
+    -------
+    int
+        Number of parallel jobs to use.
+    """
     try:
         jobs = int(os.environ.get("JOBS", ""))
         if jobs > 0:
@@ -63,6 +111,19 @@ def get_jobs() -> int:
 
 
 def parse_plasmids(platon_tsv: Path) -> set[str]:
+    """Parse Platon TSV to get plasmid contig IDs.
+
+    Parameters
+    ----------
+    platon_tsv : pathlib.Path
+        Path to the Platon output TSV file. If the file does not exist or is
+        empty, an empty set is returned.
+
+    Returns
+    -------
+    set[str]
+        Set of contig IDs predicted as plasmids (taken from the 'ID' column).
+    """
     if not platon_tsv.exists() or platon_tsv.stat().st_size == 0:
         return set()
     with platon_tsv.open("r", encoding="utf-8") as handle:
@@ -71,6 +132,24 @@ def parse_plasmids(platon_tsv: Path) -> set[str]:
 
 
 def parse_gtdb_info(sourmash_csv: Path) -> tuple[str, float]:
+    """Read Sourmash CSV and extract GTDB species and ANI.
+
+    The function reads the first non-header row of the sourmash CSV and parses
+    the `name` column to extract a two-token species string following the
+    accession. If the first token after the accession is 'uncultured' it is
+    removed before selecting the two tokens. The `ani` column is parsed as a
+    float and may be NaN when empty.
+
+    Parameters
+    ----------
+    sourmash_csv : pathlib.Path
+        Path to the sourmash CSV file produced by the pipeline.
+
+    Returns
+    -------
+    tuple[str, float]
+        (gtdb_species, gtdb_ani). gtdb_ani may be math.nan if not present.
+    """
     with sourmash_csv.open("r", encoding="utf-8", newline="") as handle:
         reader = csv.DictReader(handle)
         row = next(reader, None)
@@ -91,6 +170,25 @@ def parse_gtdb_info(sourmash_csv: Path) -> tuple[str, float]:
 
 
 def parse_rgi_mutations(*mut_fields: str) -> tuple[str, ...]:
+    """Parse RGI mutation fields into normalized mutation tokens.
+
+    RGI reports mutations in two columns which may contain comma-separated
+    values and may include trailing ":<number>" annotations. This function
+    splits the provided fields on commas, strips any trailing ":..." suffix,
+    normalizes tokens (via :func:`normalize_mutation_token`) and returns a
+    tuple of normalized mutation strings.
+
+    Parameters
+    ----------
+    *mut_fields : str
+        One or more raw mutation strings from RGI columns (e.g.,
+        'S83I:3329, D87G').
+
+    Returns
+    -------
+    tuple[str, ...]
+        Tuple of normalized mutation strings, zero-length if none were found.
+    """
     parsed: list[str] = []
     for field in mut_fields:
         if not field or field in {"n/a", "NA"}:
@@ -106,6 +204,23 @@ def parse_rgi_mutations(*mut_fields: str) -> tuple[str, ...]:
 
 
 def normalize_mutation_token(token: str) -> str | None:
+    """Normalize a single mutation token.
+
+    Accepts simple amino-acid or nucleotide mutation tokens of the form
+    'S83I', 'G442E', or with '-' for indels. Returns a canonical string where
+    the position is zero-padded to seven digits (e.g., 'S0000083I'). If the
+    token does not match the expected pattern, returns None.
+
+    Parameters
+    ----------
+    token : str
+        Raw mutation token to normalize.
+
+    Returns
+    -------
+    str or None
+        Normalized mutation string or None if the token could not be parsed.
+    """
     match = RGI_MUT_RE.match(token)
     if not match:
         return None
@@ -114,6 +229,25 @@ def normalize_mutation_token(token: str) -> str | None:
 
 
 def normalize_aro(aro_value: str) -> str:
+    """Normalize an ARO identifier to a seven-digit numeric string.
+
+    Parameters
+    ----------
+    aro_value : str
+        Raw ARO value (may contain non-digit characters). The function
+        extracts the trailing digits, trims to seven digits if longer, and
+        left-pads with zeros.
+
+    Returns
+    -------
+    str
+        Seven-digit zero-padded ARO identifier.
+
+    Raises
+    ------
+    ValueError
+        If no digits can be extracted from the provided value.
+    """
     digits = re.sub(r"\D", "", aro_value or "")
     if not digits:
         raise ValueError(f"Invalid ARO value: {aro_value!r}")
@@ -123,6 +257,29 @@ def normalize_aro(aro_value: str) -> str:
 
 
 def extract_feature_sequence(record_seq, feature, is_rna: bool) -> str:
+    """Retrieve the sequence for a feature from a GFF record.
+
+    For CDS features, prefer the 'translation' qualifier when present (Prokka
+    often provides translated peptide sequences). For RNA features, return the
+    nucleotide sequence. If no sequence can be obtained, return an empty
+    string.
+
+    Parameters
+    ----------
+    record_seq : Bio.Seq.Seq or similar
+        Sequence of the parent record (used to extract nucleotide subsequences).
+    feature : BCBio GFF feature
+        The feature object containing location and qualifiers.
+    is_rna : bool
+        If True, treat the feature as RNA and return nucleotide sequence;
+        otherwise attempt to return an amino-acid sequence (translation).
+
+    Returns
+    -------
+    str
+        Sequence string (AA for proteins, NT for RNA) or empty string if not
+        available.
+    """
     if not is_rna:
         translation = feature.qualifiers.get("translation", [])
         if translation:
@@ -136,11 +293,45 @@ def extract_feature_sequence(record_seq, feature, is_rna: bool) -> str:
 
 
 def is_rna_feature_type(feature_type: str) -> bool:
+    """Heuristic to decide whether a GFF feature type represents RNA.
+
+    Parameters
+    ----------
+    feature_type : str
+        GFF feature.type string (e.g., 'CDS', 'tRNA').
+
+    Returns
+    -------
+    bool
+        True when the type is considered RNA (any type containing 'rna' but
+        not exactly 'CDS').
+    """
     t = (feature_type or "").lower()
     return t != "cds" and "rna" in t
 
 
 def parse_accession_raw(accession_dir: Path) -> dict:
+    """Parse all annotation files for one accession directory.
+
+    This function reads Prokka GFF, RGI TSV, sourmash CSV and optional Platon
+    TSV for a single accession directory and returns a dict containing:
+    - accession
+    - gtdb_species
+    - gtdb_ani
+    - rgi_rows : list of parsed RGI annotation dicts
+    - prokka_rows : list of parsed Prokka annotation dicts
+
+    Parameters
+    ----------
+    accession_dir : pathlib.Path
+        Directory containing files named <accession>.* produced by the
+        per-accession annotation step.
+
+    Returns
+    -------
+    dict
+        Summary dictionary described above.
+    """
     accession = accession_dir.name
     prokka_gff = accession_dir / f"{accession}.prokka.gff"
     rgi_txt = accession_dir / f"{accession}.rgi.txt"
@@ -217,6 +408,22 @@ def parse_accession_raw(accession_dir: Path) -> dict:
 
 
 def overlap_ratio_union(a_start: int, a_end: int, b_start: int, b_end: int) -> float:
+    """Compute overlap divided by union span between two intervals.
+
+    The function computes the length of the intersection divided by the span of
+    the union, i.e. overlap_len / (max(end)-min(start)+1). This is the
+    metric used to decide whether a Prokka and RGI annotation overlap >=95%.
+
+    Parameters
+    ----------
+    a_start, a_end, b_start, b_end : int
+        1-based inclusive coordinates for the two intervals.
+
+    Returns
+    -------
+    float
+        Fraction in range [0.0, 1.0] describing overlap/span.
+    """
     overlap = max(0, min(a_end, b_end) - max(a_start, b_start) + 1)
     if overlap == 0:
         return 0.0
@@ -225,6 +432,24 @@ def overlap_ratio_union(a_start: int, a_end: int, b_start: int, b_end: int) -> f
 
 
 def load_existing_prokka_mapping(json_path: Path) -> dict[str, str]:
+    """Load existing Prokka name->ID mapping from JSON if present.
+
+    The JSON produced by this script maps Prokka IDs (e.g., 'P0000001') to
+    product names. This helper loads that JSON and returns a mapping from
+    product name to numeric ID string (without the 'P' prefix) for reuse when
+    assigning stable IDs across reruns.
+
+    Parameters
+    ----------
+    json_path : pathlib.Path
+        Path to the existing OUTPREFIX.json file.
+
+    Returns
+    -------
+    dict[str, str]
+        Mapping product name -> seven-digit numeric ID string (e.g., 'beta'
+        -> '0000001'). Empty dict if json_path does not exist or is invalid.
+    """
     if not json_path.exists():
         return {}
     with json_path.open("r", encoding="utf-8") as handle:
@@ -241,6 +466,28 @@ def load_existing_prokka_mapping(json_path: Path) -> dict[str, str]:
 def build_prokka_id_map(
     all_products: Iterable[str], existing_name_to_id: dict[str, str]
 ) -> tuple[dict[str, str], dict[str, str]]:
+    """Create a stable mapping from Prokka product names to P####### IDs.
+
+    This function merges existing mappings with new product names discovered
+    in the current run. It reserves '0000000' for 'hypothetical protein' and
+    assigns incrementing numeric IDs for previously unseen products. It
+    returns both name->id and id->product mappings suitable for writing the
+    OUTPREFIX.json file.
+
+    Parameters
+    ----------
+    all_products : iterable of str
+        All Prokka product strings observed across accessions.
+    existing_name_to_id : dict
+        Existing mapping from product name to numeric id string (no 'P' prefix),
+        if any (loaded from previous OUTPREFIX.json).
+
+    Returns
+    -------
+    tuple[dict[str,str], dict[str,str]]
+        (name_to_id, id_to_name) where name_to_id maps product->numeric-id
+        (e.g., 'beta'->'0000001') and id_to_name maps 'P{numeric}'->product.
+    """
     name_to_id = dict(existing_name_to_id)
     name_to_id["hypothetical protein"] = "0000000"
     used = {int(v) for v in name_to_id.values() if v.isdigit()}
@@ -265,6 +512,28 @@ def build_prokka_id_map(
 def write_source_fastas(
     merged_by_accession: dict[str, list[RawAnnotation]], cache_dir: Path
 ) -> dict[tuple[str, bool], list[RawAnnotation]]:
+    """Write per-product FASTA files for Prokka annotations.
+
+    For each unique Prokka product identifier (numeric PID) the function
+    writes a FASTA file named '<PID>.faa' or '<PID>.fna' into the cache
+    directory. Sequence headers are formed as '<accession>__<locus_tag>'. To
+    reduce race conditions this function writes files atomically by comparing
+    content and only rewriting when necessary.
+
+    Parameters
+    ----------
+    merged_by_accession : dict
+        Mapping accession -> list of RawAnnotation objects (merged RGI+Prokka).
+    cache_dir : pathlib.Path
+        Directory where per-product FASTA files are stored.
+
+    Returns
+    -------
+    dict[tuple[str,bool], list[RawAnnotation]]
+        Mapping (product_id_without_prefix, is_rna) -> list of RawAnnotation
+        objects that were written for that product. This is used by later
+        clustering steps.
+    """
     by_product_type: dict[tuple[str, bool], list[RawAnnotation]] = defaultdict(list)
     for anns in merged_by_accession.values():
         for ann in anns:
@@ -287,6 +556,21 @@ def write_source_fastas(
 
 
 def run_cmd(cmd: list[str], cwd: Path | None = None, stdout_path: Path | None = None) -> None:
+    """Run a subprocess command with optional stdout redirection.
+
+    This wrapper calls subprocess.run with check=True and optionally writes the
+    command stdout to the provided file path. Any exception from subprocess is
+    propagated to the caller.
+
+    Parameters
+    ----------
+    cmd : list[str]
+        Command and arguments to execute.
+    cwd : pathlib.Path or None
+        Working directory for the command.
+    stdout_path : pathlib.Path or None
+        If provided, open this file and redirect the command's stdout into it.
+    """
     if stdout_path is None:
         subprocess.run(cmd, check=True, cwd=cwd)
         return
@@ -295,6 +579,26 @@ def run_cmd(cmd: list[str], cwd: Path | None = None, stdout_path: Path | None = 
 
 
 def split_mmseqs_msa(msa_path: Path, out_prefix: str) -> list[Path]:
+    """Split an mmseqs concatenated MSA into per-cluster FASTA files.
+
+    MMseqs result2flat produces an MSA file where sequence headers are
+    repeated to signal cluster boundaries. This function reads the MSA,
+    identifies cluster boundaries by repeated identifiers and writes one
+    FASTA file per cluster named '<out_prefix>.<cluster_idx>.msa.fna' or
+    '.msa.faa' according to the input extension.
+
+    Parameters
+    ----------
+    msa_path : pathlib.Path
+        Path to the mmseqs-produced MSA (flat) file.
+    out_prefix : str
+        Prefix to use when constructing output cluster filenames.
+
+    Returns
+    -------
+    list[pathlib.Path]
+        List of written cluster FASTA paths.
+    """
     ext = "fna" if msa_path.name.endswith(".fna") else "faa"
     old_files = glob.glob(f"{out_prefix}.*.msa.{ext}")
     for file_path in old_files:
@@ -348,6 +652,23 @@ def split_mmseqs_msa(msa_path: Path, out_prefix: str) -> list[Path]:
 
 
 def msa_has_accession_headers(msa_path: Path) -> bool:
+    """Detect whether an MSA file uses accession__locus headers.
+
+    Some older mmseqs result files use numeric identifiers rather than the
+    fasta headers embedded in the original sequences. This helper scans the
+    first FASTA header and returns True when it detects the '{{accession}}__'
+    pattern used by this pipeline.
+
+    Parameters
+    ----------
+    msa_path : pathlib.Path
+        Path to the MSA file to inspect.
+
+    Returns
+    -------
+    bool
+        True when accession__locus headers are present, False otherwise.
+    """
     if not msa_path.exists():
         return False
     with msa_path.open("r", encoding="utf-8") as handle:
@@ -363,6 +684,18 @@ def msa_has_accession_headers(msa_path: Path) -> bool:
 
 
 def fasta_record_count(fasta_path: Path) -> int:
+    """Count FASTA records in a file.
+
+    Parameters
+    ----------
+    fasta_path : pathlib.Path
+        Path to the FASTA file.
+
+    Returns
+    -------
+    int
+        Number of records (lines starting with '>') in the file.
+    """
     count = 0
     with fasta_path.open("r", encoding="utf-8") as handle:
         for line in handle:
@@ -372,6 +705,26 @@ def fasta_record_count(fasta_path: Path) -> int:
 
 
 def run_product_pipeline(task: tuple[str, bool, str]) -> tuple[str, bool]:
+    """Run clustering, MSA and SNP-calling pipeline for one Prokka product.
+
+    This function executes the sequence of external tools required to cluster
+    sequences for a given Prokka product, build per-cluster MSAs and call
+    variants with snp-sites. It is intended to be run in parallel across
+    products.
+
+    Parameters
+    ----------
+    task : tuple
+        (product_id_without_prefix, is_rna, cache_dir_str). product_id is the
+        seven-digit identifier assigned to the Prokka product (without the
+        leading 'P'), is_rna indicates nucleotide vs amino-acid mode, and
+        cache_dir_str is the path to the OUTPREFIX.cache directory.
+
+    Returns
+    -------
+    tuple[str, bool]
+        The (product_id, is_rna) tuple for the completed task.
+    """
     pid, is_rna, cache_dir_str = task
     cache_dir = Path(cache_dir_str)
     ext = "fna" if is_rna else "faa"
@@ -493,6 +846,23 @@ def run_product_pipeline(task: tuple[str, bool, str]) -> tuple[str, bool]:
 
 
 def parse_vcf_mutations(vcf_path: Path) -> dict[str, list[str]]:
+    """Parse a VCF file produced by snp-sites into per-sample mutation lists.
+
+    Only simple SNPs are returned (single-base ref and alt). The sample
+    identifiers are expected to be fasta headers produced by mmseqs 'result2flat'
+    (e.g., '<accession>__<locus_tag>'). The return is a dict mapping sample
+    header -> list of normalized mutation strings.
+
+    Parameters
+    ----------
+    vcf_path : pathlib.Path
+        Path to the VCF file to parse.
+
+    Returns
+    -------
+    dict[str, list[str]]
+        Mapping of sample header to list of mutation strings.
+    """
     sample_mutations: dict[str, list[str]] = defaultdict(list)
     if not vcf_path.exists() or vcf_path.stat().st_size == 0:
         return sample_mutations
@@ -536,6 +906,27 @@ def parse_vcf_mutations(vcf_path: Path) -> dict[str, list[str]]:
 def collect_prokka_cluster_maps(
     cache_dir: Path, by_product_type: dict[tuple[str, bool], list[RawAnnotation]]
 ) -> tuple[dict[tuple[str, str], str], dict[tuple[str, str], list[str]]]:
+    """Collect mapping from Prokka sequences to cluster families and mutations.
+
+    This function iterates over all product cluster MSAs and builds two
+    structures:
+      - seq_to_family: (accession, locus_tag) -> family id string (e.g., 'P0000001')
+      - seq_to_mutations: (accession, locus_tag) -> list of mutation strings
+
+    Parameters
+    ----------
+    cache_dir : pathlib.Path
+        Path to the OUTPREFIX.cache directory where cluster MSAs and VCFs are
+        stored.
+    by_product_type : dict
+        Mapping (product_id_without_prefix, is_rna) -> list of RawAnnotation
+        objects used to seed the clustering.
+
+    Returns
+    -------
+    tuple
+        (seq_to_family, seq_to_mutations) as described above.
+    """
     seq_to_family: dict[tuple[str, str], str] = {}
     seq_to_mutations: dict[tuple[str, str], list[str]] = defaultdict(list)
 
@@ -567,6 +958,34 @@ def build_outputs(
     seq_to_family: dict[tuple[str, str], str],
     seq_to_mutations: dict[tuple[str, str], list[str]],
 ) -> pd.DataFrame:
+    """Aggregate feature counts and build final pandas DataFrame.
+
+    For each accession, iterate through merged annotations (RGI and Prokka),
+    compute feature column names according to the pipeline's naming scheme and
+    increment counts for genes and specific mutations. RGI annotations take
+    precedence and are represented with ARO-based function IDs; Prokka
+    annotations use assigned P####### IDs and cluster family identifiers.
+
+    Parameters
+    ----------
+    merged_by_accession : dict
+        Mapping accession -> list of RawAnnotation objects (merged set).
+    meta_by_accession : dict
+        Mapping accession -> (gtdb_species, gtdb_ani).
+    seq_to_family : dict
+        Mapping (accession, locus_tag) -> family id string produced by
+        clustering (e.g., 'P0000001').
+    seq_to_mutations : dict
+        Mapping (accession, locus_tag) -> list of mutation strings found in
+        the VCFs.
+
+    Returns
+    -------
+    pandas.DataFrame
+        DataFrame with columns ['accession','gtdb_species','gtdb_ani', ...features...]
+        where feature columns are integers counting occurrences and mutation
+        occurrences.
+    """
     rows: list[dict] = []
     all_features: set[str] = set()
 
@@ -611,6 +1030,14 @@ def build_outputs(
 
 
 def main() -> None:
+    """Main entry point executing the full tabulation workflow.
+
+    The function parses command-line arguments, prepares the cache directory,
+    parses each accession in parallel to extract annotations, persists
+    per-product FASTA files, runs the clustering/MSA/SNP pipeline (parallel
+    across products), collects cluster-to-sequence mappings, compiles the
+    feature table DataFrame, and writes the CSV and JSON outputs.
+    """
     args = parse_args()
     indir = Path(args.INDIR)
     outprefix = Path(args.OUTPREFIX)

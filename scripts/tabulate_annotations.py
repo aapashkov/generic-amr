@@ -20,7 +20,6 @@ from typing import Iterable
 
 import pandas as pd
 from BCBio import GFF
-from Bio import SeqIO
 
 
 RGI_MUT_SPLIT_RE = re.compile(r"\s*,\s*")
@@ -578,75 +577,133 @@ def run_cmd(cmd: list[str], cwd: Path | None = None, stdout_path: Path | None = 
         subprocess.run(cmd, check=True, cwd=cwd, stdout=out_handle)
 
 
-def split_mmseqs_msa(msa_path: Path, out_prefix: str) -> list[Path]:
-    """Split an mmseqs concatenated MSA into per-cluster FASTA files.
+def parse_mmseqs_cluster_tsv(cluster_tsv_path: Path) -> list[list[str]]:
+    """Parse an mmseqs ``*_cluster.tsv`` into ordered member clusters.
 
-    MMseqs result2flat produces an MSA file where sequence headers are
-    repeated to signal cluster boundaries. This function reads the MSA,
-    identifies cluster boundaries by repeated identifiers and writes one
-    FASTA file per cluster named '<out_prefix>.<cluster_idx>.msa.fna' or
-    '.msa.faa' according to the input extension.
+    The cluster TSV emitted by mmseqs uses two tab-delimited columns:
+    representative ID and member ID. This helper groups rows by representative
+    while preserving first-seen order of both representatives and members.
 
     Parameters
     ----------
-    msa_path : pathlib.Path
-        Path to the mmseqs-produced MSA (flat) file.
-    out_prefix : str
-        Prefix to use when constructing output cluster filenames.
+    cluster_tsv_path : pathlib.Path
+        Path to the mmseqs ``*_cluster.tsv`` file.
 
     Returns
     -------
-    list[pathlib.Path]
-        List of written cluster FASTA paths.
+    list[list[str]]
+        Ordered clusters where each item is a list of member sequence IDs.
     """
-    ext = "fna" if msa_path.name.endswith(".fna") else "faa"
-    old_files = glob.glob(f"{out_prefix}.*.msa.{ext}")
-    for file_path in old_files:
-        os.unlink(file_path)
+    clusters: dict[str, list[str]] = {}
+    with cluster_tsv_path.open("r", encoding="utf-8") as handle:
+        for line in handle:
+            line = line.rstrip("\n")
+            if not line:
+                continue
+            fields = line.split("\t")
+            if len(fields) < 2:
+                continue
+            rep, member = fields[0].strip(), fields[1].strip()
+            if not rep or not member:
+                continue
+            if rep not in clusters:
+                clusters[rep] = []
+            if member not in clusters[rep]:
+                clusters[rep].append(member)
+    return list(clusters.values())
 
-    records: list[tuple[str, str]] = []
-    header = None
+
+def read_fasta_map(fasta_path: Path) -> dict[str, str]:
+    """Read FASTA records into a header-to-sequence mapping.
+
+    When a header appears multiple times, a non-empty sequence replaces an
+    existing empty sequence. This behavior handles mmseqs flat MSA files where
+    representative headers can appear once as a marker and again with aligned
+    sequence content.
+
+    Parameters
+    ----------
+    fasta_path : pathlib.Path
+        Path to the FASTA file.
+
+    Returns
+    -------
+    dict[str, str]
+        Mapping from FASTA header (without '>') to sequence string.
+    """
+    records: dict[str, str] = {}
+    header: str | None = None
     seq_lines: list[str] = []
-    with msa_path.open("r", encoding="utf-8") as handle:
+    with fasta_path.open("r", encoding="utf-8") as handle:
         for line in handle:
             line = line.rstrip("\n")
             if not line:
                 continue
             if line.startswith(">"):
                 if header is not None:
-                    records.append((header, "".join(seq_lines)))
+                    seq = "".join(seq_lines)
+                    if header not in records or (not records[header] and seq):
+                        records[header] = seq
                 header = line[1:].strip()
                 seq_lines = []
             else:
                 seq_lines.append(line.strip())
         if header is not None:
-            records.append((header, "".join(seq_lines)))
+            seq = "".join(seq_lines)
+            if header not in records or (not records[header] and seq):
+                records[header] = seq
+    return records
 
-    clusters: list[list[tuple[str, str]]] = []
-    current: list[tuple[str, str]] = []
-    seen: set[str] = set()
-    for rec_header, seq in records:
-        if not seq:
-            if current:
-                clusters.append(current)
-                current = []
-                seen = set()
-            continue
-        if rec_header in seen and current:
-            clusters.append(current)
-            current = []
-            seen = set()
-        current.append((rec_header, seq))
-        seen.add(rec_header)
-    if current:
-        clusters.append(current)
+
+def split_mmseqs_msa(
+    msa_path: Path, out_prefix: str, cluster_tsv_path: Path, source_fasta: Path
+) -> list[Path]:
+    """Write per-cluster MSA FASTAs using mmseqs cluster membership.
+
+    Cluster membership is sourced from ``*_cluster.tsv`` because inferring
+    boundaries from flat MSA text can drop members when mmseqs emits header-only
+    records. Aligned sequences are taken from ``msa_path`` when present and
+    fall back to the original source FASTA otherwise.
+
+    Parameters
+    ----------
+    msa_path : pathlib.Path
+        Path to the mmseqs-produced flat MSA.
+    out_prefix : str
+        Prefix used for per-cluster output filenames.
+    cluster_tsv_path : pathlib.Path
+        Path to ``*_cluster.tsv`` for the same product.
+    source_fasta : pathlib.Path
+        Source FASTA used for clustering.
+
+    Returns
+    -------
+    list[pathlib.Path]
+        List of written per-cluster MSA FASTA paths.
+    """
+    ext = "fna" if msa_path.name.endswith(".fna") else "faa"
+    old_files = glob.glob(f"{out_prefix}.*.msa.{ext}")
+    for file_path in old_files:
+        os.unlink(file_path)
+
+    msa_records = read_fasta_map(msa_path) if msa_path.exists() else {}
+    source_records = read_fasta_map(source_fasta)
+    if cluster_tsv_path.exists():
+        clusters = parse_mmseqs_cluster_tsv(cluster_tsv_path)
+    else:
+        clusters = [[header] for header in source_records]
 
     out_paths: list[Path] = []
-    for idx, cluster in enumerate(clusters):
+    for idx, members in enumerate(clusters):
         out_path = Path(f"{out_prefix}.{idx:07d}.msa.{ext}")
         with out_path.open("w", encoding="utf-8") as handle:
-            for rec_header, seq in cluster:
-                handle.write(f">{rec_header}\n{seq}\n")
+            for member in members:
+                seq = msa_records.get(member) or source_records.get(member)
+                if seq is None:
+                    raise RuntimeError(
+                        f"Missing sequence '{member}' while splitting {cluster_tsv_path.name}"
+                    )
+                handle.write(f">{member}\n{seq}\n")
         out_paths.append(out_path)
     return out_paths
 
@@ -739,110 +796,115 @@ def run_product_pipeline(task: tuple[str, bool, str]) -> tuple[str, bool]:
     tmp_input = tmp_dir / "latest" / "input"
     tmp_clu = tmp_dir / "latest" / "clu"
     clu_seqs = tmp_dir / "latest" / "clu_seqs"
+    cluster_tsv = cache_dir / f"{pid}_cluster.tsv"
     seq_count = fasta_record_count(source_fasta)
 
-    if seq_count <= 1:
-        if (not flat_msa.exists()) or source_fasta.stat().st_mtime > flat_msa.stat().st_mtime:
-            shutil.copyfile(source_fasta, flat_msa)
-    else:
-        need_cluster = (
-            (not flat_msa.exists())
-            or source_fasta.stat().st_mtime > flat_msa.stat().st_mtime
-            or (not msa_has_accession_headers(flat_msa))
-        )
-        if need_cluster:
-            if tmp_dir.exists():
-                shutil.rmtree(tmp_dir)
-            cmd = [
-                "mmseqs",
-                "easy-linclust",
-                "--threads",
-                "1",
-                "--min-seq-id",
-                min_seq,
-                "-c",
-                min_seq,
-                "--cov-mode",
-                "1",
-                "--cluster-mode",
-                "2",
-                "--remove-tmp-files",
-                "0",
-                "--dbtype",
-                dbtype,
-                str(source_fasta),
-                str(prefix),
-                str(tmp_dir),
-            ]
-            run_cmd(cmd)
-
-            if is_rna:
-                run_cmd(
-                    [
-                        "mmseqs",
-                        "apply",
-                        str(clu_seqs),
-                        str(clu_msa),
-                        "--",
-                        "mafft",
-                        "--retree",
-                        "1",
-                        "--maxiterate",
-                        "0",
-                        "--nofft",
-                        "--parttree",
-                        "--nuc",
-                        "-",
-                    ]
-                )
-            else:
-                run_cmd(
-                    [
-                        "mmseqs",
-                        "result2msa",
-                        str(tmp_input),
-                        str(tmp_input),
-                        str(tmp_clu),
-                        str(clu_msa),
-                    ]
-                )
-            run_cmd(
-                [
+    try:
+        if seq_count <= 1:
+            if (not flat_msa.exists()) or source_fasta.stat().st_mtime > flat_msa.stat().st_mtime:
+                shutil.copyfile(source_fasta, flat_msa)
+        else:
+            need_cluster = (
+                (not flat_msa.exists())
+                or source_fasta.stat().st_mtime > flat_msa.stat().st_mtime
+                or (not msa_has_accession_headers(flat_msa))
+            )
+            if need_cluster:
+                if tmp_dir.exists():
+                    shutil.rmtree(tmp_dir)
+                cmd = [
                     "mmseqs",
-                    "result2flat",
-                    str(tmp_input),
-                    str(tmp_input),
-                    str(clu_msa),
-                    str(flat_msa),
-                    "--use-fasta-header",
+                    "easy-linclust",
+                    "--threads",
                     "1",
+                    "--min-seq-id",
+                    min_seq,
+                    "-c",
+                    min_seq,
+                    "--cov-mode",
+                    "1",
+                    "--cluster-mode",
+                    "2",
+                    "--remove-tmp-files",
+                    "0",
+                    "--dbtype",
+                    dbtype,
+                    str(source_fasta),
+                    str(prefix),
+                    str(tmp_dir),
                 ]
-            )
+                run_cmd(cmd)
 
-    cluster_paths = split_mmseqs_msa(flat_msa, str(cache_dir / pid))
-    old_vcfs = glob.glob(str(cache_dir / f"{pid}.*.vcf"))
-    for file_path in old_vcfs:
-        os.unlink(file_path)
-    for cluster_path in cluster_paths:
-        stem = cluster_path.name.replace(f".msa.{ext}", "")
-        vcf_path = cache_dir / f"{stem}.vcf"
-        with vcf_path.open("w", encoding="utf-8") as out_handle:
-            proc = subprocess.run(
-                ["snp-sites", "-v", str(cluster_path)],
-                stdout=out_handle,
-                stderr=subprocess.PIPE,
-                text=True,
-                check=False,
-            )
-        if proc.returncode != 0:
-            stderr = proc.stderr or ""
-            if "No SNPs were detected" not in stderr:
-                raise subprocess.CalledProcessError(
-                    returncode=proc.returncode,
-                    cmd=proc.args,
-                    stderr=stderr,
+                if is_rna:
+                    run_cmd(
+                        [
+                            "mmseqs",
+                            "apply",
+                            str(clu_seqs),
+                            str(clu_msa),
+                            "--",
+                            "mafft",
+                            "--retree",
+                            "1",
+                            "--maxiterate",
+                            "0",
+                            "--nofft",
+                            "--parttree",
+                            "--nuc",
+                            "-",
+                        ]
+                    )
+                else:
+                    run_cmd(
+                        [
+                            "mmseqs",
+                            "result2msa",
+                            str(tmp_input),
+                            str(tmp_input),
+                            str(tmp_clu),
+                            str(clu_msa),
+                        ]
+                    )
+                run_cmd(
+                    [
+                        "mmseqs",
+                        "result2flat",
+                        str(tmp_input),
+                        str(tmp_input),
+                        str(clu_msa),
+                        str(flat_msa),
+                        "--use-fasta-header",
+                        "1",
+                    ]
                 )
-    return pid, is_rna
+
+        cluster_paths = split_mmseqs_msa(flat_msa, str(cache_dir / pid), cluster_tsv, source_fasta)
+        old_vcfs = glob.glob(str(cache_dir / f"{pid}.*.vcf"))
+        for file_path in old_vcfs:
+            os.unlink(file_path)
+        for cluster_path in cluster_paths:
+            stem = cluster_path.name.replace(f".msa.{ext}", "")
+            vcf_path = cache_dir / f"{stem}.vcf"
+            with vcf_path.open("w", encoding="utf-8") as out_handle:
+                proc = subprocess.run(
+                    ["snp-sites", "-v", str(cluster_path)],
+                    stdout=out_handle,
+                    stderr=subprocess.PIPE,
+                    text=True,
+                    check=False,
+                )
+            if proc.returncode != 0:
+                stderr = proc.stderr or ""
+                if "No SNPs were detected" not in stderr:
+                    raise subprocess.CalledProcessError(
+                        returncode=proc.returncode,
+                        cmd=proc.args,
+                        stderr=stderr,
+                    )
+        return pid, is_rna
+    finally:
+        if tmp_dir.exists():
+            shutil.rmtree(tmp_dir)
 
 
 def parse_vcf_mutations(vcf_path: Path) -> dict[str, list[str]]:
@@ -908,7 +970,8 @@ def collect_prokka_cluster_maps(
 ) -> tuple[dict[tuple[str, str], str], dict[tuple[str, str], list[str]]]:
     """Collect mapping from Prokka sequences to cluster families and mutations.
 
-    This function iterates over all product cluster MSAs and builds two
+    This function uses mmseqs ``*_cluster.tsv`` files to define family
+    membership and reads per-cluster VCFs to collect mutations, building two
     structures:
       - seq_to_family: (accession, locus_tag) -> family id string (e.g., 'P0000001')
       - seq_to_mutations: (accession, locus_tag) -> list of mutation strings
@@ -931,18 +994,18 @@ def collect_prokka_cluster_maps(
     seq_to_mutations: dict[tuple[str, str], list[str]] = defaultdict(list)
 
     for pid, is_rna in sorted(by_product_type):
-        ext = "fna" if is_rna else "faa"
-        cluster_paths = sorted(Path(p) for p in glob.glob(str(cache_dir / f"{pid}.*.msa.{ext}")))
-        for cluster_path in cluster_paths:
-            family_idx = cluster_path.name.split(".")[1]
-            family = f"{'R' if is_rna else 'P'}{family_idx}"
-            for rec in SeqIO.parse(str(cluster_path), "fasta"):
-                if "__" not in rec.id:
-                    continue
-                accession, locus_tag = rec.id.split("__", 1)
-                seq_to_family[(accession, locus_tag)] = family
+        cluster_tsv = cache_dir / f"{pid}_cluster.tsv"
+        if cluster_tsv.exists():
+            for idx, members in enumerate(parse_mmseqs_cluster_tsv(cluster_tsv)):
+                family = f"{'R' if is_rna else 'P'}{idx:07d}"
+                for member in members:
+                    if "__" not in member:
+                        continue
+                    accession, locus_tag = member.split("__", 1)
+                    seq_to_family[(accession, locus_tag)] = family
 
-            vcf_path = cache_dir / cluster_path.name.replace(f".msa.{ext}", ".vcf")
+        vcf_paths = sorted(Path(p) for p in glob.glob(str(cache_dir / f"{pid}.*.vcf")))
+        for vcf_path in vcf_paths:
             sample_muts = parse_vcf_mutations(vcf_path)
             for sample, muts in sample_muts.items():
                 if "__" not in sample:

@@ -72,6 +72,7 @@ rgi main --include_loose --debug -i "$input" -o "${base}.rgi" -n 1 --clean \
 if [ -z ${index_exists+x} ]; then
   rm -f "${input}.fai"
 fi
+rm "${base}.rgi.json"
 
 # Run annotation with Platon
 platon -vp "${base}.platon" -t 1 "$input" -d "$platon"

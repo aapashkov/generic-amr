@@ -14,9 +14,10 @@ import re
 import shutil
 import subprocess
 from collections import Counter, defaultdict
-from dataclasses import dataclass
+from dataclasses import dataclass, replace
 from pathlib import Path
 from typing import Iterable
+
 
 import pandas as pd
 from BCBio import GFF
@@ -156,12 +157,16 @@ def parse_gtdb_info(sourmash_csv: Path) -> tuple[str, float]:
             raise ValueError(f"{sourmash_csv} has no rows")
         name_tokens = row.get("name", "").split()
         if len(name_tokens) <= 1:
-            raise ValueError(f"Could not parse species from sourmash name: {row.get('name')}")
+            raise ValueError(
+                f"Could not parse species from sourmash name: {row.get('name')}"
+            )
         tokens = name_tokens[1:]
         if tokens and tokens[0].lower() == "uncultured":
             tokens = tokens[1:]
         if len(tokens) < 2:
-            raise ValueError(f"Could not derive species from sourmash name: {row.get('name')}")
+            raise ValueError(
+                f"Could not derive species from sourmash name: {row.get('name')}"
+            )
         species = f"{tokens[0]} {tokens[1]}"
         ani_raw = row.get("ani", "")
         ani = float(ani_raw) if ani_raw not in {"", None} else math.nan
@@ -378,8 +383,12 @@ def parse_accession_raw(accession_dir: Path) -> dict:
                 strand = "+" if int(feature.location.strand or 1) >= 0 else "-"
                 is_rna = feature.type != "CDS"
                 qualifiers = feature.qualifiers
-                product = str(qualifiers.get("product", ["hypothetical protein"])[0]).strip()
-                locus_tag = str(qualifiers.get("locus_tag", [qualifiers.get("ID", [""])[0]])[0])
+                product = str(
+                    qualifiers.get("product", ["hypothetical protein"])[0]
+                ).strip()
+                locus_tag = str(
+                    qualifiers.get("locus_tag", [qualifiers.get("ID", [""])[0]])[0]
+                )
                 seq = extract_feature_sequence(record.seq, feature, is_rna)
                 if not seq:
                     continue
@@ -404,6 +413,53 @@ def parse_accession_raw(accession_dir: Path) -> dict:
         "rgi_rows": rgi_rows,
         "prokka_rows": prokka_rows,
     }
+
+
+def load_cached_accession_raw(cache_path: Path, accession: str) -> dict | None:
+    """Load cached parse result for one accession.
+
+    Parameters
+    ----------
+    cache_path : pathlib.Path
+        Path to the per-accession cache JSON file.
+    accession : str
+        Expected accession identifier.
+
+    Returns
+    -------
+    dict or None
+        Cached parse result if valid, otherwise None.
+    """
+    if not cache_path.exists():
+        return None
+    with cache_path.open("r", encoding="utf-8") as handle:
+        cached = json.load(handle)
+    if not isinstance(cached, dict):
+        return None
+    if cached.get("accession") != accession:
+        return None
+    if "rgi_rows" not in cached or "prokka_rows" not in cached:
+        return None
+    if not isinstance(cached["rgi_rows"], list) or not isinstance(
+        cached["prokka_rows"], list
+    ):
+        return None
+    return cached
+
+
+def write_cached_accession_raw(cache_path: Path, result: dict) -> None:
+    """Persist parsed accession result in cache JSON.
+
+    Parameters
+    ----------
+    cache_path : pathlib.Path
+        Destination cache JSON path.
+    result : dict
+        Parsed accession result produced by :func:`parse_accession_raw`.
+    """
+    with cache_path.open("w", encoding="utf-8") as handle:
+        json.dump(result, handle, separators=(",", ":"))
+        handle.write("\n")
 
 
 def overlap_ratio_union(a_start: int, a_end: int, b_start: int, b_end: int) -> float:
@@ -510,7 +566,7 @@ def build_prokka_id_map(
 
 def write_source_fastas(
     merged_by_accession: dict[str, list[RawAnnotation]], cache_dir: Path
-) -> dict[tuple[str, bool], list[RawAnnotation]]:
+) -> set[tuple[str, bool]]:
     """Write per-product FASTA files for Prokka annotations.
 
     For each unique Prokka product identifier (numeric PID) the function
@@ -528,33 +584,36 @@ def write_source_fastas(
 
     Returns
     -------
-    dict[tuple[str,bool], list[RawAnnotation]]
-        Mapping (product_id_without_prefix, is_rna) -> list of RawAnnotation
-        objects that were written for that product. This is used by later
-        clustering steps.
+    set[tuple[str,bool]]
+        Set of (product_id_without_prefix, is_rna) tuples written to FASTA.
+        This is used by later clustering steps.
     """
-    by_product_type: dict[tuple[str, bool], list[RawAnnotation]] = defaultdict(list)
+    by_product_type: dict[tuple[str, bool], list[tuple[str, str]]] = defaultdict(list)
     for anns in merged_by_accession.values():
         for ann in anns:
             if ann.source != "PROKKA":
                 continue
-            by_product_type[(ann.function_id[1:], ann.is_rna)].append(ann)
+            if ann.locus_tag is None or ann.sequence is None:
+                raise RuntimeError("Missing locus_tag/sequence for Prokka annotation")
+            seq_id = f"{ann.accession}__{ann.locus_tag}"
+            by_product_type[(ann.function_id[1:], ann.is_rna)].append(
+                (seq_id, ann.sequence)
+            )
 
-    for (pid, is_rna), anns in by_product_type.items():
+    for (pid, is_rna), records in by_product_type.items():
         ext = "fna" if is_rna else "faa"
         out_path = cache_dir / f"{pid}.{ext}"
-        lines = []
-        for ann in anns:
-            seq_id = f"{ann.accession}__{ann.locus_tag}"
-            lines.append(f">{seq_id}\n{ann.sequence}\n")
+        lines = [f">{seq_id}\n{seq}\n" for seq_id, seq in records]
         new_content = "".join(lines)
         if out_path.exists() and out_path.read_text(encoding="utf-8") == new_content:
             continue
         out_path.write_text(new_content, encoding="utf-8")
-    return by_product_type
+    return set(by_product_type.keys())
 
 
-def run_cmd(cmd: list[str], cwd: Path | None = None, stdout_path: Path | None = None) -> None:
+def run_cmd(
+    cmd: list[str], cwd: Path | None = None, stdout_path: Path | None = None
+) -> None:
     """Run a subprocess command with optional stdout redirection.
 
     This wrapper calls subprocess.run with check=True and optionally writes the
@@ -801,7 +860,9 @@ def run_product_pipeline(task: tuple[str, bool, str]) -> tuple[str, bool]:
 
     try:
         if seq_count <= 1:
-            if (not flat_msa.exists()) or source_fasta.stat().st_mtime > flat_msa.stat().st_mtime:
+            if (
+                not flat_msa.exists()
+            ) or source_fasta.stat().st_mtime > flat_msa.stat().st_mtime:
                 shutil.copyfile(source_fasta, flat_msa)
         else:
             need_cluster = (
@@ -878,7 +939,9 @@ def run_product_pipeline(task: tuple[str, bool, str]) -> tuple[str, bool]:
                     ]
                 )
 
-        cluster_paths = split_mmseqs_msa(flat_msa, str(cache_dir / pid), cluster_tsv, source_fasta)
+        cluster_paths = split_mmseqs_msa(
+            flat_msa, str(cache_dir / pid), cluster_tsv, source_fasta
+        )
         old_vcfs = glob.glob(str(cache_dir / f"{pid}.*.vcf"))
         for file_path in old_vcfs:
             os.unlink(file_path)
@@ -965,8 +1028,39 @@ def parse_vcf_mutations(vcf_path: Path) -> dict[str, list[str]]:
     return sample_mutations
 
 
+def collect_prokka_cluster_map_for_product(
+    task: tuple[str, bool, str],
+) -> tuple[dict[tuple[str, str], str], dict[tuple[str, str], list[str]]]:
+    """Collect family and mutation maps for a single Prokka product."""
+    pid, is_rna, cache_dir_str = task
+    cache_dir = Path(cache_dir_str)
+    seq_to_family: dict[tuple[str, str], str] = {}
+    seq_to_mutations: dict[tuple[str, str], list[str]] = defaultdict(list)
+
+    cluster_tsv = cache_dir / f"{pid}_cluster.tsv"
+    if cluster_tsv.exists():
+        for idx, members in enumerate(parse_mmseqs_cluster_tsv(cluster_tsv)):
+            family = f"{'R' if is_rna else 'P'}{idx:07d}"
+            for member in members:
+                if "__" not in member:
+                    continue
+                accession, locus_tag = member.split("__", 1)
+                seq_to_family[(accession, locus_tag)] = family
+
+    vcf_paths = sorted(Path(p) for p in glob.glob(str(cache_dir / f"{pid}.*.vcf")))
+    for vcf_path in vcf_paths:
+        sample_muts = parse_vcf_mutations(vcf_path)
+        for sample, muts in sample_muts.items():
+            if "__" not in sample:
+                continue
+            accession, locus_tag = sample.split("__", 1)
+            seq_to_mutations[(accession, locus_tag)].extend(muts)
+
+    return seq_to_family, dict(seq_to_mutations)
+
+
 def collect_prokka_cluster_maps(
-    cache_dir: Path, by_product_type: dict[tuple[str, bool], list[RawAnnotation]]
+    cache_dir: Path, product_types: Iterable[tuple[str, bool]]
 ) -> tuple[dict[tuple[str, str], str], dict[tuple[str, str], list[str]]]:
     """Collect mapping from Prokka sequences to cluster families and mutations.
 
@@ -981,9 +1075,9 @@ def collect_prokka_cluster_maps(
     cache_dir : pathlib.Path
         Path to the OUTPREFIX.cache directory where cluster MSAs and VCFs are
         stored.
-    by_product_type : dict
-        Mapping (product_id_without_prefix, is_rna) -> list of RawAnnotation
-        objects used to seed the clustering.
+    product_types : iterable
+        Iterable of (product_id_without_prefix, is_rna) tuples used to seed the
+        clustering.
 
     Returns
     -------
@@ -993,25 +1087,23 @@ def collect_prokka_cluster_maps(
     seq_to_family: dict[tuple[str, str], str] = {}
     seq_to_mutations: dict[tuple[str, str], list[str]] = defaultdict(list)
 
-    for pid, is_rna in sorted(by_product_type):
-        cluster_tsv = cache_dir / f"{pid}_cluster.tsv"
-        if cluster_tsv.exists():
-            for idx, members in enumerate(parse_mmseqs_cluster_tsv(cluster_tsv)):
-                family = f"{'R' if is_rna else 'P'}{idx:07d}"
-                for member in members:
-                    if "__" not in member:
-                        continue
-                    accession, locus_tag = member.split("__", 1)
-                    seq_to_family[(accession, locus_tag)] = family
+    try:
+        n_products = len(product_types)  # pyright: ignore[reportArgumentType]
+    except TypeError:
+        n_products = sum(1 for _ in product_types)
 
-        vcf_paths = sorted(Path(p) for p in glob.glob(str(cache_dir / f"{pid}.*.vcf")))
-        for vcf_path in vcf_paths:
-            sample_muts = parse_vcf_mutations(vcf_path)
-            for sample, muts in sample_muts.items():
-                if "__" not in sample:
-                    continue
-                accession, locus_tag = sample.split("__", 1)
-                seq_to_mutations[(accession, locus_tag)].extend(muts)
+    tasks = [(pid, is_rna, str(cache_dir)) for pid, is_rna in sorted(product_types)]
+    if not tasks:
+        return seq_to_family, seq_to_mutations
+
+    jobs = get_jobs()
+    with mp.Pool(processes=jobs) as pool:
+        per_product_results = pool.map(collect_prokka_cluster_map_for_product, tasks)
+
+    for family_map, mut_map in per_product_results:
+        seq_to_family.update(family_map)
+        for key, muts in mut_map.items():
+            seq_to_mutations[key].extend(muts)
     return seq_to_family, seq_to_mutations
 
 
@@ -1096,10 +1188,11 @@ def main() -> None:
     """Main entry point executing the full tabulation workflow.
 
     The function parses command-line arguments, prepares the cache directory,
-    parses each accession in parallel to extract annotations, persists
-    per-product FASTA files, runs the clustering/MSA/SNP pipeline (parallel
-    across products), collects cluster-to-sequence mappings, compiles the
-    feature table DataFrame, and writes the CSV and JSON outputs.
+    reuses cached per-accession parse results when available, parses only new
+    accessions in parallel, persists per-product FASTA files, runs the
+    clustering/MSA/SNP pipeline (parallel across products), collects
+    cluster-to-sequence mappings, compiles the feature table DataFrame, and
+    writes the CSV and JSON outputs.
     """
     args = parse_args()
     indir = Path(args.INDIR)
@@ -1107,22 +1200,49 @@ def main() -> None:
     csv_path = outprefix.with_suffix(".csv")
     json_path = outprefix.with_suffix(".json")
     cache_dir = Path(f"{outprefix}.cache")
+    accession_cache_dir = cache_dir / "accessions"
     jobs = get_jobs()
 
     cache_dir.mkdir(parents=True, exist_ok=True)
+    accession_cache_dir.mkdir(parents=True, exist_ok=True)
 
     accession_dirs = sorted(
-        path for path in indir.iterdir() if path.is_dir() and not path.name.startswith(".")
+        path
+        for path in indir.iterdir()
+        if path.is_dir() and not path.name.startswith(".")
     )
     if not accession_dirs:
         raise RuntimeError(f"No accessions found in {indir}")
 
-    with mp.Pool(processes=jobs) as pool:
-        raw_results = pool.map(parse_accession_raw, accession_dirs)
+    results_by_accession: dict[str, dict] = {}
+    to_parse_dirs: list[Path] = []
+    for accession_dir in accession_dirs:
+        accession = accession_dir.name
+        cached = load_cached_accession_raw(
+            accession_cache_dir / f"{accession}.raw.json", accession
+        )
+        if cached is not None:
+            results_by_accession[accession] = cached
+            continue
+        to_parse_dirs.append(accession_dir)
+
+    if to_parse_dirs:
+        with mp.Pool(processes=jobs) as pool:
+            parsed_results = pool.map(parse_accession_raw, to_parse_dirs)
+        for res in parsed_results:
+            accession = str(res["accession"])
+            results_by_accession[accession] = res
+            write_cached_accession_raw(
+                accession_cache_dir / f"{accession}.raw.json", res
+            )
+
+    raw_results = [results_by_accession[path.name] for path in accession_dirs]
 
     all_products = [row["product"] for res in raw_results for row in res["prokka_rows"]]
     existing_name_to_id = load_existing_prokka_mapping(json_path)
-    product_to_id, id_to_product = build_prokka_id_map(all_products, existing_name_to_id)
+    product_to_id, id_to_product = build_prokka_id_map(
+        all_products, existing_name_to_id
+    )
 
     merged_by_accession: dict[str, list[RawAnnotation]] = {}
     meta_by_accession: dict[str, tuple[str, float]] = {}
@@ -1168,23 +1288,34 @@ def main() -> None:
 
         merged: list[RawAnnotation] = list(rgi_annotations)
         for p_ann in prokka_annotations:
-            replace = False
+            should_replace = False
             for r_ann in rgi_annotations:
                 if (
                     p_ann.contig == r_ann.contig
                     and p_ann.strand == r_ann.strand
                     and p_ann.is_rna == r_ann.is_rna
-                    and overlap_ratio_union(p_ann.start, p_ann.end, r_ann.start, r_ann.end) >= 0.95
+                    and overlap_ratio_union(
+                        p_ann.start, p_ann.end, r_ann.start, r_ann.end
+                    )
+                    >= 0.95
                 ):
-                    replace = True
+                    should_replace = True
                     break
-            if not replace:
+            if not should_replace:
                 merged.append(p_ann)
         merged_by_accession[accession] = merged
 
-    by_product_type = write_source_fastas(merged_by_accession, cache_dir)
+    product_types = write_source_fastas(merged_by_accession, cache_dir)
+    for accession, anns in merged_by_accession.items():
+        merged_by_accession[accession] = [
+            replace(ann, sequence=None) if ann.sequence is not None else ann
+            for ann in anns
+        ]
+
+    raw_results.clear()
     wanted_fastas = {
-        cache_dir / f"{pid}.{'fna' if is_rna else 'faa'}" for (pid, is_rna) in by_product_type
+        cache_dir / f"{pid}.{'fna' if is_rna else 'faa'}"
+        for (pid, is_rna) in product_types
     }
     for stale in cache_dir.glob("[0-9][0-9][0-9][0-9][0-9][0-9][0-9].fna"):
         if stale not in wanted_fastas:
@@ -1192,15 +1323,19 @@ def main() -> None:
     for stale in cache_dir.glob("[0-9][0-9][0-9][0-9][0-9][0-9][0-9].faa"):
         if stale not in wanted_fastas:
             stale.unlink()
-    tasks = [(pid, is_rna, str(cache_dir)) for (pid, is_rna) in sorted(by_product_type.keys())]
+    tasks = [(pid, is_rna, str(cache_dir)) for (pid, is_rna) in sorted(product_types)]
 
     if tasks:
         with mp.Pool(processes=jobs) as pool:
             pool.map(run_product_pipeline, tasks)
 
-    seq_to_family, seq_to_mutations = collect_prokka_cluster_maps(cache_dir, by_product_type)
+    seq_to_family, seq_to_mutations = collect_prokka_cluster_maps(
+        cache_dir, product_types
+    )
 
-    df = build_outputs(merged_by_accession, meta_by_accession, seq_to_family, seq_to_mutations)
+    df = build_outputs(
+        merged_by_accession, meta_by_accession, seq_to_family, seq_to_mutations
+    )
     df.to_csv(csv_path, index=False)
 
     with json_path.open("w", encoding="utf-8") as handle:

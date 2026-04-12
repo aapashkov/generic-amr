@@ -16,7 +16,7 @@ import subprocess
 from collections import Counter, defaultdict
 from dataclasses import dataclass, replace
 from pathlib import Path
-from typing import Iterable
+from typing import Generator, Iterable
 
 
 import pandas as pd
@@ -1112,14 +1112,14 @@ def build_outputs(
     meta_by_accession: dict[str, tuple[str, float]],
     seq_to_family: dict[tuple[str, str], str],
     seq_to_mutations: dict[tuple[str, str], list[str]],
-) -> pd.DataFrame:
-    """Aggregate feature counts and build final pandas DataFrame.
+) -> tuple[list[str], Generator[list[object], None, None]]:
+    """Build output header and stream per-accession feature-count rows.
 
-    For each accession, iterate through merged annotations (RGI and Prokka),
-    compute feature column names according to the pipeline's naming scheme and
-    increment counts for genes and specific mutations. RGI annotations take
-    precedence and are represented with ARO-based function IDs; Prokka
-    annotations use assigned P####### IDs and cluster family identifiers.
+    The function performs two passes over all merged annotations.
+    In the first pass, it collects the complete set of feature column names
+    without counting occurrences. In the second pass, it counts features for
+    each accession and yields one CSV-ready row at a time in the same column
+    order as the header.
 
     Parameters
     ----------
@@ -1136,25 +1136,27 @@ def build_outputs(
 
     Returns
     -------
-    pandas.DataFrame
-        DataFrame with columns ['accession','gtdb_species','gtdb_ani', ...features...]
-        where feature columns are integers counting occurrences and mutation
-        occurrences.
-    """
-    rows: list[dict] = []
-    all_features: set[str] = set()
+    tuple[list[str], Generator[list[object], None, None]]
+        A tuple with:
 
-    for accession in sorted(merged_by_accession):
-        species, ani = meta_by_accession[accession]
-        feature_counts: Counter[str] = Counter()
+        - header: list of output column names in final CSV order
+          ``['accession', 'gtdb_species', 'gtdb_ani', ...sorted feature cols...]``.
+        - rows: generator yielding one row list per accession, where feature
+          values are integer counts aligned to ``header``.
+    """
+    all_features: set[str] = set()
+    sorted_accessions = sorted(merged_by_accession)
+
+    # Pass 1: gather feature names only (no counting).
+    for accession in sorted_accessions:
         for ann in merged_by_accession[accession]:
             plasmid_prefix = "P" if ann.is_plasmid else "N"
             if ann.source == "RGI":
                 family = f"{'R' if ann.is_rna else 'P'}0000000"
                 base = f"{plasmid_prefix}_{ann.function_id}_{family}"
-                feature_counts[base] += 1
+                all_features.add(base)
                 for mut in ann.mutations:
-                    feature_counts[f"{base}_{mut}"] += 1
+                    all_features.add(f"{base}_{mut}")
                 continue
 
             if ann.locus_tag is None:
@@ -1164,24 +1166,42 @@ def build_outputs(
             if family is None:
                 family = f"{'R' if ann.is_rna else 'P'}0000000"
             base = f"{plasmid_prefix}_{ann.function_id}_{family}"
-            feature_counts[base] += 1
+            all_features.add(base)
             for mut in seq_to_mutations.get(key, []):
-                feature_counts[f"{base}_{mut}"] += 1
-
-        row = {"accession": accession, "gtdb_species": species, "gtdb_ani": ani}
-        row.update(feature_counts)
-        all_features.update(feature_counts.keys())
-        rows.append(row)
+                all_features.add(f"{base}_{mut}")
 
     feature_cols = sorted(all_features)
-    df = pd.DataFrame(rows)
-    for col in feature_cols:
-        if col not in df.columns:
-            df[col] = 0
-    if feature_cols:
-        df[feature_cols] = df[feature_cols].fillna(0).astype(int)
-    out_cols = ["accession", "gtdb_species", "gtdb_ani", *feature_cols]
-    return df[out_cols]  # pyright: ignore[reportReturnType]
+    header = ["accession", "gtdb_species", "gtdb_ani", *feature_cols]
+
+    def row_generator() -> Generator[list[object], None, None]:
+        # Pass 2: count features per accession and emit one row at a time.
+        for accession in sorted_accessions:
+            species, ani = meta_by_accession[accession]
+            feature_counts: Counter[str] = Counter()
+            for ann in merged_by_accession[accession]:
+                plasmid_prefix = "P" if ann.is_plasmid else "N"
+                if ann.source == "RGI":
+                    family = f"{'R' if ann.is_rna else 'P'}0000000"
+                    base = f"{plasmid_prefix}_{ann.function_id}_{family}"
+                    feature_counts[base] += 1
+                    for mut in ann.mutations:
+                        feature_counts[f"{base}_{mut}"] += 1
+                    continue
+
+                if ann.locus_tag is None:
+                    raise RuntimeError("Missing locus_tag for Prokka annotation")
+                key = (accession, ann.locus_tag)
+                family = seq_to_family.get(key)
+                if family is None:
+                    family = f"{'R' if ann.is_rna else 'P'}0000000"
+                base = f"{plasmid_prefix}_{ann.function_id}_{family}"
+                feature_counts[base] += 1
+                for mut in seq_to_mutations.get(key, []):
+                    feature_counts[f"{base}_{mut}"] += 1
+
+            yield [accession, species, ani, *[feature_counts.get(col, 0) for col in feature_cols]]
+
+    return header, row_generator()
 
 
 def main() -> None:
@@ -1191,7 +1211,7 @@ def main() -> None:
     reuses cached per-accession parse results when available, parses only new
     accessions in parallel, persists per-product FASTA files, runs the
     clustering/MSA/SNP pipeline (parallel across products), collects
-    cluster-to-sequence mappings, compiles the feature table DataFrame, and
+    cluster-to-sequence mappings, builds streaming feature-count rows, and
     writes the CSV and JSON outputs.
     """
     args = parse_args()
@@ -1333,10 +1353,14 @@ def main() -> None:
         cache_dir, product_types
     )
 
-    df = build_outputs(
+    header, row_generator = build_outputs(
         merged_by_accession, meta_by_accession, seq_to_family, seq_to_mutations
     )
-    df.to_csv(csv_path, index=False)
+    with csv_path.open("w", encoding="utf-8", newline="") as handle:
+        writer = csv.writer(handle)
+        writer.writerow(header)
+        for row in row_generator:
+            writer.writerow(row)
 
     with json_path.open("w", encoding="utf-8") as handle:
         json.dump(id_to_product, handle, indent=2, sort_keys=True)

@@ -13,13 +13,16 @@ import os
 import re
 import shutil
 import subprocess
+import sys
 from collections import Counter, defaultdict
 from dataclasses import dataclass, replace
 from pathlib import Path
-from typing import Generator, Iterable
+from typing import Iterable
 
 
+import numpy as np
 import pandas as pd
+from scipy import sparse
 from BCBio import GFF
 
 
@@ -79,7 +82,7 @@ def parse_args() -> argparse.Namespace:
     argparse.Namespace
         Namespace with attributes:
         - INDIR : input directory containing per-accession annotation folders
-        - OUTPREFIX : output prefix for CSV, JSON and cache directory
+        - OUTPREFIX : output prefix for CSV/NPZ/TXT/JSON and cache directory
     """
     parser = argparse.ArgumentParser(
         description="Tabulate genome annotations into feature counts."
@@ -1112,14 +1115,14 @@ def build_outputs(
     meta_by_accession: dict[str, tuple[str, float]],
     seq_to_family: dict[tuple[str, str], str],
     seq_to_mutations: dict[tuple[str, str], list[str]],
-) -> tuple[list[str], Generator[list[object], None, None]]:
-    """Build output header and stream per-accession feature-count rows.
+) -> tuple[list[tuple[str, str, float]], list[str], sparse.csr_matrix]:
+    """Build metadata rows, feature names, and sparse count matrix.
 
     The function performs two passes over all merged annotations.
     In the first pass, it collects the complete set of feature column names
     without counting occurrences. In the second pass, it counts features for
-    each accession and yields one CSV-ready row at a time in the same column
-    order as the header.
+    each accession and writes a sparse CSR matrix where each row is an
+    accession and each column is one feature.
 
     Parameters
     ----------
@@ -1136,13 +1139,12 @@ def build_outputs(
 
     Returns
     -------
-    tuple[list[str], Generator[list[object], None, None]]
+    tuple[list[tuple[str, str, float]], list[str], scipy.sparse.csr_matrix]
         A tuple with:
-
-        - header: list of output column names in final CSV order
-          ``['accession', 'gtdb_species', 'gtdb_ani', ...sorted feature cols...]``.
-        - rows: generator yielding one row list per accession, where feature
-          values are integer counts aligned to ``header``.
+        - meta_rows: list of ``(accession, gtdb_species, gtdb_ani)`` rows in
+          accession-sorted order.
+        - feature_cols: sorted list of matrix column names.
+        - matrix: CSR matrix of feature counts with dtype ``uint8``.
     """
     all_features: set[str] = set()
     sorted_accessions = sorted(merged_by_accession)
@@ -1171,37 +1173,68 @@ def build_outputs(
                 all_features.add(f"{base}_{mut}")
 
     feature_cols = sorted(all_features)
-    header = ["accession", "gtdb_species", "gtdb_ani", *feature_cols]
+    feature_to_idx = {col: idx for idx, col in enumerate(feature_cols)}
 
-    def row_generator() -> Generator[list[object], None, None]:
-        # Pass 2: count features per accession and emit one row at a time.
-        for accession in sorted_accessions:
-            species, ani = meta_by_accession[accession]
-            feature_counts: Counter[str] = Counter()
-            for ann in merged_by_accession[accession]:
-                plasmid_prefix = "P" if ann.is_plasmid else "N"
-                if ann.source == "RGI":
-                    family = f"{'R' if ann.is_rna else 'P'}0000000"
-                    base = f"{plasmid_prefix}_{ann.function_id}_{family}"
-                    feature_counts[base] += 1
-                    for mut in ann.mutations:
-                        feature_counts[f"{base}_{mut}"] += 1
-                    continue
+    meta_rows: list[tuple[str, str, float]] = []
+    data: list[int] = []
+    indices: list[int] = []
+    indptr: list[int] = [0]
 
-                if ann.locus_tag is None:
-                    raise RuntimeError("Missing locus_tag for Prokka annotation")
-                key = (accession, ann.locus_tag)
-                family = seq_to_family.get(key)
-                if family is None:
-                    family = f"{'R' if ann.is_rna else 'P'}0000000"
+    # Pass 2: count features per accession and append non-zero entries only.
+    for accession in sorted_accessions:
+        species, ani = meta_by_accession[accession]
+        meta_rows.append((accession, species, ani))
+        feature_counts: Counter[str] = Counter()
+        for ann in merged_by_accession[accession]:
+            plasmid_prefix = "P" if ann.is_plasmid else "N"
+            if ann.source == "RGI":
+                family = f"{'R' if ann.is_rna else 'P'}0000000"
                 base = f"{plasmid_prefix}_{ann.function_id}_{family}"
                 feature_counts[base] += 1
-                for mut in seq_to_mutations.get(key, []):
+                for mut in ann.mutations:
                     feature_counts[f"{base}_{mut}"] += 1
+                continue
 
-            yield [accession, species, ani, *[feature_counts.get(col, 0) for col in feature_cols]]
+            if ann.locus_tag is None:
+                raise RuntimeError("Missing locus_tag for Prokka annotation")
+            key = (accession, ann.locus_tag)
+            family = seq_to_family.get(key)
+            if family is None:
+                family = f"{'R' if ann.is_rna else 'P'}0000000"
+            base = f"{plasmid_prefix}_{ann.function_id}_{family}"
+            feature_counts[base] += 1
+            for mut in seq_to_mutations.get(key, []):
+                feature_counts[f"{base}_{mut}"] += 1
 
-    return header, row_generator()
+        row_entries: list[tuple[int, int]] = []
+        for col, value in feature_counts.items():
+            clipped = value
+            if value > 255:
+                print(
+                    f"WARNING: clipping feature count to 255 for accession={accession}, "
+                    f"column={col}, value={value}",
+                    file=sys.stderr,
+                )
+                clipped = 255
+            row_entries.append((feature_to_idx[col], clipped))
+
+        row_entries.sort(key=lambda item: item[0])
+        for col_idx, clipped in row_entries:
+            indices.append(col_idx)
+            data.append(clipped)
+        indptr.append(len(indices))
+
+    matrix = sparse.csr_matrix(
+        (
+            np.asarray(data, dtype=np.uint8),
+            np.asarray(indices, dtype=np.int32),
+            np.asarray(indptr, dtype=np.int32),
+        ),
+        shape=(len(sorted_accessions), len(feature_cols)),
+        dtype=np.uint8,
+    )
+
+    return meta_rows, feature_cols, matrix
 
 
 def main() -> None:
@@ -1218,6 +1251,8 @@ def main() -> None:
     indir = Path(args.INDIR)
     outprefix = Path(args.OUTPREFIX)
     csv_path = outprefix.with_suffix(".csv")
+    npz_path = outprefix.with_suffix(".npz")
+    txt_path = outprefix.with_suffix(".txt")
     json_path = outprefix.with_suffix(".json")
     cache_dir = Path(f"{outprefix}.cache")
     accession_cache_dir = cache_dir / "accessions"
@@ -1353,14 +1388,21 @@ def main() -> None:
         cache_dir, product_types
     )
 
-    header, row_generator = build_outputs(
+    meta_rows, feature_cols, matrix = build_outputs(
         merged_by_accession, meta_by_accession, seq_to_family, seq_to_mutations
     )
+
+    sparse.save_npz(npz_path, matrix)
+
+    with txt_path.open("w", encoding="utf-8") as handle:
+        for col in feature_cols:
+            handle.write(f"{col}\n")
+
     with csv_path.open("w", encoding="utf-8", newline="") as handle:
         writer = csv.writer(handle)
-        writer.writerow(header)
-        for row in row_generator:
-            writer.writerow(row)
+        writer.writerow(["accession", "gtdb_species", "gtdb_ani"])
+        for accession, species, ani in meta_rows:
+            writer.writerow([accession, species, ani])
 
     with json_path.open("w", encoding="utf-8") as handle:
         json.dump(id_to_product, handle, indent=2, sort_keys=True)
